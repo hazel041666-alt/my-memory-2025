@@ -6,34 +6,35 @@ import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision';
 // 1. 资源生成与工具函数
 // -----------------------------------------------------------------------------
 
-// 模拟拍立得纹理生成器
+// 模拟拍立得纹理生成器 (高清版)
 const createPolaroidTexture = (content: string | HTMLImageElement, color: string) => {
   const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 300; 
+  // 提升分辨率至 1024x1200 以保证放大后的清晰度
+  canvas.width = 1024;
+  canvas.height = 1200; 
   const ctx = canvas.getContext('2d');
   if (!ctx) return new THREE.Texture();
 
   ctx.fillStyle = '#fdfdfd';
-  ctx.fillRect(0, 0, 256, 300);
+  ctx.fillRect(0, 0, 1024, 1200);
   
   ctx.shadowColor = "rgba(0,0,0,0.15)";
-  ctx.shadowBlur = 15;
+  ctx.shadowBlur = 60; // 调整阴影模糊度适配高分辨率
   
   ctx.fillStyle = color;
-  ctx.fillRect(20, 20, 216, 216);
+  ctx.fillRect(80, 80, 864, 864); // 调整内边距
   ctx.shadowBlur = 0;
 
   if (typeof content === 'string') {
-    ctx.font = 'bold 40px "Impact", sans-serif';
+    ctx.font = 'bold 160px "Impact", sans-serif'; // 字号放大
     ctx.fillStyle = '#333';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(content, 128, 128); 
+    ctx.fillText(content, 512, 512); 
     
-    ctx.font = '20px "Courier New", monospace';
+    ctx.font = '80px "Courier New", monospace';
     ctx.fillStyle = '#666';
-    ctx.fillText("2025", 128, 270);
+    ctx.fillText("2025", 512, 1080);
   } else {
     const aspect = content.width / content.height;
     let sw = content.width;
@@ -47,15 +48,18 @@ const createPolaroidTexture = (content: string | HTMLImageElement, color: string
       sh = content.width;
       sy = (content.height - content.width) / 2;
     }
-    ctx.drawImage(content, sx, sy, sw, sh, 20, 20, 216, 216);
+    ctx.drawImage(content, sx, sy, sw, sh, 80, 80, 864, 864);
     
-    ctx.font = '16px "Courier New", monospace';
+    ctx.font = '64px "Courier New", monospace';
     ctx.fillStyle = '#444';
-    ctx.fillText("My Memory", 128, 270);
+    ctx.fillText("My Memory", 512, 1080);
   }
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  // 使用各向异性过滤以提高倾斜视角的清晰度
+  texture.minFilter = THREE.LinearMipMapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
   return texture;
 };
 
@@ -524,6 +528,7 @@ export default function App() {
     const height = mountRef.current.clientHeight;
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 500);
     
+    // 自适应摄像机距离
     const updateCameraDistance = () => {
         const aspect = window.innerWidth / window.innerHeight;
         const targetWidth = 75; 
@@ -777,16 +782,39 @@ export default function App() {
 
         // Detect Tap (short duration, small movement)
         if (dt < 300 && Math.hypot(dx, dy) < 30) {
-            // 随机选择一张照片放大 (忽略是否点中，提升手机体验)
-            // 如果已经有放大的照片，则不做动作（等待用户操作UI）或者关闭？
-            // 根据需求：“点击屏幕，随机放大一张照片”
-            if (interactionState.current.activePhotoId === -1) {
-                const randomId = Math.floor(Math.random() * PHOTO_COUNT);
-                setActivePhoto(randomId);
-            } else {
-                // 如果已经放大，点击背景也许可以关闭？
-                // 暂不处理，强制使用关闭按钮
+            handleRaycast(clientX, clientY);
+        }
+    };
+
+    const handleRaycast = (clientX: number, clientY: number) => {
+        const mouse = new THREE.Vector2((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(meshes);
+        
+        // Find direct hit first
+        let targetId = -1;
+        if (intersects.length > 0) {
+            const obj = objects.find(p => p.mesh === intersects[0].object);
+            if (obj && !obj.isDeco) {
+                targetId = obj.id;
             }
+        }
+
+        // If missed, use Random Zoom (Mobile Friendly)
+        if (targetId === -1) {
+            // Mobile check
+            const isMobile = window.innerWidth < 768;
+            if (isMobile) {
+               // Randomly pick a photo
+               targetId = Math.floor(Math.random() * PHOTO_COUNT);
+            }
+        }
+
+        // Apply selection
+        if (targetId !== -1) {
+             // If already active, maybe don't toggle off to avoid confusion, rely on close button
+             // Or toggle. Let's do set active.
+             setActivePhoto(targetId);
         }
     };
 
@@ -814,6 +842,7 @@ export default function App() {
               if (results.gestures.length > 0) {
                   const name = results.gestures[0][0].categoryName;
                   setGestureStatus(name);
+                  // 只有手势能控制聚合状态
                   if (name === 'Closed_Fist' && !isFormedRef.current) setFormed(true);
                   if (name === 'Open_Palm' && isFormedRef.current) setFormed(false);
 
@@ -854,6 +883,7 @@ export default function App() {
              (p.mesh.material as THREE.ShaderMaterial).uniforms.uTime.value = time;
              (p.mesh.material as THREE.ShaderMaterial).uniforms.uProgress.value = uProgress;
           } else {
+             // 2D 照片 (JS Animation)
              p.currentPos.lerpVectors(p.chaosPos, p.formedPos, uProgress); 
 
               let targetPos = new THREE.Vector3();

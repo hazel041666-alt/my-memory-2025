@@ -19,14 +19,14 @@ const createPolaroidTexture = (content: string | HTMLImageElement, color: string
   ctx.fillRect(0, 0, 1024, 1200);
   
   ctx.shadowColor = "rgba(0,0,0,0.15)";
-  ctx.shadowBlur = 60; // 调整阴影模糊度适配高分辨率
+  ctx.shadowBlur = 60; 
   
   ctx.fillStyle = color;
-  ctx.fillRect(80, 80, 864, 864); // 调整内边距
+  ctx.fillRect(80, 80, 864, 864); 
   ctx.shadowBlur = 0;
 
   if (typeof content === 'string') {
-    ctx.font = 'bold 160px "Impact", sans-serif'; // 字号放大
+    ctx.font = 'bold 160px "Impact", sans-serif'; 
     ctx.fillStyle = '#333';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -56,8 +56,8 @@ const createPolaroidTexture = (content: string | HTMLImageElement, color: string
   }
 
   const texture = new THREE.CanvasTexture(canvas);
+  // 关键：标记纹理为 sRGB，配合渲染器的 outputColorSpace 使用
   texture.colorSpace = THREE.SRGBColorSpace;
-  // 使用各向异性过滤以提高倾斜视角的清晰度
   texture.minFilter = THREE.LinearMipMapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
   return texture;
@@ -430,7 +430,7 @@ export default function App() {
       try {
         console.log("Loading MediaPipe Vision...");
         const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
         );
         if (!isMounted) return;
         
@@ -540,9 +540,11 @@ export default function App() {
     };
     updateCameraDistance();
 
+    // 关键修复：设置 outputColorSpace 为 SRGB，解决照片变暗问题
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace; // 修复色彩
     mountRef.current.appendChild(renderer.domElement);
 
     const raycaster = new THREE.Raycaster();
@@ -592,7 +594,7 @@ export default function App() {
     stars.frustumCulled = false; 
     scene.add(stars);
 
-    // 4. Photos & Decorations
+    // 4. Photos & Decorations (Meshes)
     const defaultPhotoTextures = [
       createPolaroidTexture('2025', '#ff9a9e'),
       createPolaroidTexture('HOPE', '#a18cd1'),
@@ -606,6 +608,7 @@ export default function App() {
     const objects: any[] = [];
     const meshes: THREE.Mesh[] = [];
 
+    // --- 辅助函数：设置几何体颜色 ---
     const setGeometryColor = (geometry: THREE.BufferGeometry, color: THREE.Color) => {
         const count = geometry.attributes.position.count;
         const colors = new Float32Array(count * 3);
@@ -618,6 +621,8 @@ export default function App() {
     };
 
     // --- 立体装饰几何体生成 ---
+    
+    // 1. 五角星
     const createStarGeo = () => {
       const shape = new THREE.Shape();
       const points = 5;
@@ -635,33 +640,42 @@ export default function App() {
       return geom.toNonIndexed();
     };
     
+    // 2. 礼物盒
     const createGiftGeo = () => {
         const colGoldBox = new THREE.Color('#FFD700'); 
         const colRedRibbon = new THREE.Color('#D62828'); 
+
         const boxGeo = new THREE.BoxGeometry(0.7, 0.7, 0.7).toNonIndexed();
         setGeometryColor(boxGeo, colGoldBox); 
+
         const ribbon1 = new THREE.BoxGeometry(0.75, 0.75, 0.2).toNonIndexed();
         setGeometryColor(ribbon1, colRedRibbon);
+        
         const ribbon2 = new THREE.BoxGeometry(0.2, 0.75, 0.75).toNonIndexed();
         setGeometryColor(ribbon2, colRedRibbon);
+        
         const geometries = [boxGeo, ribbon1, ribbon2];
         const merged = mergeBufferGeometries(geometries);
         merged.center();
         return merged;
     };
     
+    // 3. 雪花
     const createSnowGeo = () => {
         const barGeo = new THREE.BoxGeometry(0.08, 0.9, 0.05).toNonIndexed();
         const forkGeo = new THREE.BoxGeometry(0.3, 0.05, 0.05).toNonIndexed();
         forkGeo.translate(0, 0.25, 0); 
+        
         const axisParts = [barGeo, forkGeo];
         const axisGeo = mergeBufferGeometries(axisParts);
+
         const parts = [];
         for(let i=0; i<3; i++) {
             const g = axisGeo.clone();
             g.rotateZ((i * Math.PI) / 1.5);
             parts.push(g);
         }
+        
         const finalSnow = mergeBufferGeometries(parts);
         finalSnow.center();
         return finalSnow;
@@ -767,12 +781,15 @@ export default function App() {
 
     // Input Handling: Pointer Events for Unified Touch/Mouse
     const onPointerDown = (e: PointerEvent | TouchEvent) => {
+        if (cameraActiveRef.current) return;
         const clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
         touchStartRef.current = { x: clientX, y: clientY, time: Date.now() };
     };
 
     const onPointerUp = (e: PointerEvent | TouchEvent) => {
+        if (cameraActiveRef.current) return;
+        
         const clientX = 'changedTouches' in e ? e.changedTouches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'changedTouches' in e ? e.changedTouches[0].clientY : (e as PointerEvent).clientY;
         
@@ -818,8 +835,10 @@ export default function App() {
         }
     };
 
+    // Use Pointer events for universal support
     window.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('pointerup', onPointerUp);
+    // Fallback for mobile Safari
     window.addEventListener('touchstart', onPointerDown, { passive: false });
     window.addEventListener('touchend', onPointerUp);
 
@@ -839,6 +858,8 @@ export default function App() {
               lastVideoTimeRef.current = nowInMs;
               const results = gestureRecognizerRef.current.recognizeForVideo(videoRef.current, nowInMs);
               
+              let currentHoverId = -1; 
+
               if (results.gestures.length > 0) {
                   const name = results.gestures[0][0].categoryName;
                   setGestureStatus(name);
@@ -1011,10 +1032,10 @@ export default function App() {
                ›
             </button>
 
-            {/* Close Button (Top Right) */}
+            {/* Close Button (Bottom Center on Mobile) */}
             <button 
                onClick={handleClose}
-               className="fixed top-6 right-6 px-4 py-2 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white text-xs font-bold pointer-events-auto hover:bg-white/20"
+               className="fixed bottom-24 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white text-sm font-bold pointer-events-auto hover:bg-white/20 transition-all shadow-lg"
             >
                CLOSE
             </button>

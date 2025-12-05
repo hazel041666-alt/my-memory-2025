@@ -109,7 +109,7 @@ const mergeBufferGeometries = (geometries: THREE.BufferGeometry[]) => {
   return merged;
 };
 
-// 生成文字 "2025" 的点阵坐标 (高清重制版 - 优化清晰度)
+// 生成文字 "2025" 的点阵坐标
 const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
   const canvas = document.createElement('canvas');
   const width = 1024;
@@ -122,13 +122,11 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, width, height);
   
-  // 使用 Verdana 字体，字形宽阔，辨识度高
   ctx.font = 'bold 320px "Verdana", "Arial", sans-serif';
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   
-  // 增加一点字间距
   const textString = text.split('').join(String.fromCharCode(8202)); 
   ctx.fillText(textString, width / 2, height / 2);
 
@@ -136,7 +134,6 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
   const data = imageData.data;
   let points: THREE.Vector3[] = [];
 
-  // 降低采样步长，获取更多细节点
   const step = 4; 
 
   for (let y = 0; y < height; y += step) {
@@ -150,7 +147,6 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
     }
   }
   
-  // 随机打乱 - 这确保了无论有多少张照片，它们都会随机分布在 "2025" 的形状中
   for (let i = points.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [points[i], points[j]] = [points[j], points[i]];
@@ -176,7 +172,7 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
 // -----------------------------------------------------------------------------
 const STAR_COUNT = 5000;
 const PHOTO_COUNT = 150; 
-const DECO_COUNT = 250;  // 装饰物数量
+const DECO_COUNT = 250;  
 const TOTAL_ITEMS = PHOTO_COUNT + DECO_COUNT;
 
 // -----------------------------------------------------------------------------
@@ -356,6 +352,9 @@ export default function App() {
   const isFormedRef = useRef(isFormed);
   const mouseRef = useRef({ x: 0, y: 0 }); 
   
+  // UI State for Carousel Navigation
+  const [uiActiveId, setUiActiveId] = useState<number>(-1);
+
   // Camera & Gesture
   const videoRef = useRef<HTMLVideoElement>(null);
   const [cameraActive, setCameraActive] = useState(false);
@@ -384,6 +383,36 @@ export default function App() {
 
   // Tap Detection Ref
   const touchStartRef = useRef({ x: 0, y: 0, time: 0 });
+
+  // Helper to update active photo safely and sync UI
+  const setActivePhoto = (id: number) => {
+    interactionState.current.activePhotoId = id;
+    setUiActiveId(id);
+  };
+
+  // Carousel Handlers
+  const handleNext = (e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent raycasting click
+    let nextId = interactionState.current.activePhotoId;
+    if (nextId === -1) return;
+    // Find next valid photo (skip decos if any mixed, though currently 0-149 are photos)
+    // Simple increment loop
+    nextId = (nextId + 1) % PHOTO_COUNT;
+    setActivePhoto(nextId);
+  };
+
+  const handlePrev = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    let prevId = interactionState.current.activePhotoId;
+    if (prevId === -1) return;
+    prevId = (prevId - 1 + PHOTO_COUNT) % PHOTO_COUNT;
+    setActivePhoto(prevId);
+  };
+
+  const handleClose = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setActivePhoto(-1);
+  };
 
   useEffect(() => { 
     isFormedRef.current = isFormed; 
@@ -474,7 +503,6 @@ export default function App() {
             loadedCount++;
             
             if (loadedCount === files.length) {
-              // 关键修复：使用函数式更新来追加照片，而不是替换
               setUserTextures(prev => [...prev, ...newTextures]); 
               setSceneReady(prev => !prev); 
             }
@@ -571,6 +599,8 @@ export default function App() {
       createPolaroidTexture('LIFE', '#a6c1ee'),
     ];
     
+    const activePhotoTextures = userTextures.length > 0 ? userTextures : defaultPhotoTextures;
+    
     const objects: any[] = [];
     const meshes: THREE.Mesh[] = [];
 
@@ -587,6 +617,8 @@ export default function App() {
     };
 
     // --- 立体装饰几何体生成 ---
+    
+    // 1. 五角星
     const createStarGeo = () => {
       const shape = new THREE.Shape();
       const points = 5;
@@ -604,6 +636,7 @@ export default function App() {
       return geom.toNonIndexed();
     };
     
+    // 2. 礼物盒
     const createGiftGeo = () => {
         const colGoldBox = new THREE.Color('#FFD700'); 
         const colRedRibbon = new THREE.Color('#D62828'); 
@@ -623,6 +656,7 @@ export default function App() {
         return merged;
     };
     
+    // 3. 雪花
     const createSnowGeo = () => {
         const barGeo = new THREE.BoxGeometry(0.08, 0.9, 0.05).toNonIndexed();
         const forkGeo = new THREE.BoxGeometry(0.3, 0.05, 0.05).toNonIndexed();
@@ -656,15 +690,8 @@ export default function App() {
         let geo;
         
         if (i < PHOTO_COUNT) {
-          // --- 照片逻辑：优先使用用户照片，不足则使用默认 ---
-          let tex;
-          if (i < userTextures.length) {
-             tex = userTextures[i]; // 顺序填充
-          } else {
-             // 循环使用默认纹理填充剩余位置
-             tex = defaultPhotoTextures[i % defaultPhotoTextures.length];
-          }
-
+          // --- 照片 ---
+          const tex = activePhotoTextures[i % activePhotoTextures.length];
           const scaleBase = 0.6 + Math.random() * 0.3;
           geo = new THREE.PlaneGeometry(1.0 * scaleBase, 1.2 * scaleBase);
           mat = new THREE.ShaderMaterial({
@@ -743,17 +770,14 @@ export default function App() {
         });
     }
 
-    // Input Handling: Pointer Events for Unified Touch/Mouse
+    // Input Handling: Unified Touch/Mouse Logic
     const onPointerDown = (e: PointerEvent | TouchEvent) => {
-        if (cameraActiveRef.current) return;
         const clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
         touchStartRef.current = { x: clientX, y: clientY, time: Date.now() };
     };
 
     const onPointerUp = (e: PointerEvent | TouchEvent) => {
-        if (cameraActiveRef.current) return;
-        
         const clientX = 'changedTouches' in e ? e.changedTouches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'changedTouches' in e ? e.changedTouches[0].clientY : (e as PointerEvent).clientY;
         
@@ -768,26 +792,54 @@ export default function App() {
         }
     };
 
+    // 核心优化：智能磁吸选择 (Smart Magnetism)
     const handleRaycast = (clientX: number, clientY: number) => {
         const mouse = new THREE.Vector2((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
         raycaster.setFromCamera(mouse, camera);
         const intersects = raycaster.intersectObjects(meshes);
+        
+        let targetId = -1;
+
+        // 1. 尝试直接点击
         if (intersects.length > 0) {
             const obj = objects.find(p => p.mesh === intersects[0].object);
-            // Only toggle photos
             if (obj && !obj.isDeco) {
-                interactionState.current.activePhotoId = (interactionState.current.activePhotoId === obj.id) ? -1 : obj.id;
+                targetId = obj.id;
             }
+        }
+        
+        // 2. 如果没点中，启用磁吸辅助 (Mobile Friendly)
+        if (targetId === -1) {
+            let minDistance = 0.1; // 归一化距离阈值 (约等于手指触摸范围)
+            
+            objects.forEach(obj => {
+                if (obj.isDeco) return;
+                // 将物体坐标投影到屏幕空间
+                const screenPos = obj.mesh.position.clone().project(camera);
+                const dist = new THREE.Vector2(screenPos.x, screenPos.y).distanceTo(mouse);
+                
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    targetId = obj.id;
+                }
+            });
+        }
+
+        // 触发 UI 更新
+        if (targetId !== -1) {
+            const newId = interactionState.current.activePhotoId === targetId ? -1 : targetId;
+            interactionState.current.activePhotoId = newId;
+            setUiActiveId(newId); // 更新 React State 以显示按钮
         } else {
             interactionState.current.activePhotoId = -1;
+            setUiActiveId(-1);
         }
     };
 
     // Use Pointer events for universal support
     window.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('pointerup', onPointerUp);
-    
-    // Fallback for Safari/iOS which sometimes needs specific touch listeners
+    // Fallback for mobile Safari
     window.addEventListener('touchstart', onPointerDown, { passive: false });
     window.addEventListener('touchend', onPointerUp);
 
@@ -807,8 +859,6 @@ export default function App() {
               lastVideoTimeRef.current = nowInMs;
               const results = gestureRecognizerRef.current.recognizeForVideo(videoRef.current, nowInMs);
               
-              let currentHoverId = -1; 
-
               if (results.gestures.length > 0) {
                   const name = results.gestures[0][0].categoryName;
                   setGestureStatus(name);
@@ -961,6 +1011,35 @@ export default function App() {
             </button>
          </div>
       </div>
+
+      {/* Carousel UI (Only visible when a photo is active) */}
+      {uiActiveId !== -1 && (
+         <div className="fixed top-1/2 left-0 w-full -translate-y-1/2 flex justify-between px-4 z-50 pointer-events-none">
+            {/* Prev Button */}
+            <button 
+               onClick={handlePrev}
+               className="w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95"
+            >
+               ‹
+            </button>
+            
+            {/* Next Button */}
+            <button 
+               onClick={handleNext}
+               className="w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95"
+            >
+               ›
+            </button>
+
+            {/* Close Button (Top Right) */}
+            <button 
+               onClick={handleClose}
+               className="absolute -top-32 right-4 px-4 py-2 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white text-xs font-bold pointer-events-auto hover:bg-white/20"
+            >
+               CLOSE
+            </button>
+         </div>
+      )}
 
       <div className="absolute bottom-10 left-0 w-full pointer-events-none flex flex-col items-center justify-end z-10">
         <div className="mt-4 flex flex-col items-center gap-2 text-yellow-100/60 text-sm tracking-widest font-light uppercase">

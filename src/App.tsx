@@ -109,7 +109,7 @@ const mergeBufferGeometries = (geometries: THREE.BufferGeometry[]) => {
   return merged;
 };
 
-// 生成文字 "2025" 的点阵坐标 (Verdana 字体，极高清晰度)
+// 生成文字 "2025" 的点阵坐标 (高清重制版 - 优化清晰度)
 const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
   const canvas = document.createElement('canvas');
   const width = 1024;
@@ -136,7 +136,7 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
   const data = imageData.data;
   let points: THREE.Vector3[] = [];
 
-  // 降低采样步长，获取更多细节点，确保 '5' 的弯钩完整
+  // 降低采样步长，获取更多细节点
   const step = 4; 
 
   for (let y = 0; y < height; y += step) {
@@ -150,7 +150,7 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
     }
   }
   
-  // 随机打乱
+  // 随机打乱 - 这确保了无论有多少张照片，它们都会随机分布在 "2025" 的形状中
   for (let i = points.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [points[i], points[j]] = [points[j], points[i]];
@@ -162,9 +162,9 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
   for (let i = 0; i < count; i++) {
     const p = points[i % points.length];
     result.push(new THREE.Vector3(
-      p.x, // 移除随机抖动，保持绝对清晰
-      p.y, 
-      0    // Z轴完全拍平
+      p.x + (Math.random() - 0.5) * 0.1, 
+      p.y + (Math.random() - 0.5) * 0.1, 
+      (Math.random() - 0.5) * 0.1        
     ));
   }
   
@@ -180,7 +180,7 @@ const DECO_COUNT = 250;  // 装饰物数量
 const TOTAL_ITEMS = PHOTO_COUNT + DECO_COUNT;
 
 // -----------------------------------------------------------------------------
-// 3. 着色器 (Stars & Photo & Deco)
+// 3. 着色器
 // -----------------------------------------------------------------------------
 
 const starVertexShader = `
@@ -474,7 +474,8 @@ export default function App() {
             loadedCount++;
             
             if (loadedCount === files.length) {
-              setUserTextures(newTextures); 
+              // 关键修复：使用函数式更新来追加照片，而不是替换
+              setUserTextures(prev => [...prev, ...newTextures]); 
               setSceneReady(prev => !prev); 
             }
           };
@@ -570,13 +571,10 @@ export default function App() {
       createPolaroidTexture('LIFE', '#a6c1ee'),
     ];
     
-    const activePhotoTextures = userTextures.length > 0 ? userTextures : defaultPhotoTextures;
-    
     const objects: any[] = [];
     const meshes: THREE.Mesh[] = [];
 
     // --- 辅助函数：设置几何体颜色 ---
-    // **Fixed: Defined before use**
     const setGeometryColor = (geometry: THREE.BufferGeometry, color: THREE.Color) => {
         const count = geometry.attributes.position.count;
         const colors = new Float32Array(count * 3);
@@ -589,8 +587,6 @@ export default function App() {
     };
 
     // --- 立体装饰几何体生成 ---
-    
-    // 1. 五角星
     const createStarGeo = () => {
       const shape = new THREE.Shape();
       const points = 5;
@@ -608,7 +604,6 @@ export default function App() {
       return geom.toNonIndexed();
     };
     
-    // 2. 礼物盒
     const createGiftGeo = () => {
         const colGoldBox = new THREE.Color('#FFD700'); 
         const colRedRibbon = new THREE.Color('#D62828'); 
@@ -628,7 +623,6 @@ export default function App() {
         return merged;
     };
     
-    // 3. 雪花
     const createSnowGeo = () => {
         const barGeo = new THREE.BoxGeometry(0.08, 0.9, 0.05).toNonIndexed();
         const forkGeo = new THREE.BoxGeometry(0.3, 0.05, 0.05).toNonIndexed();
@@ -662,8 +656,15 @@ export default function App() {
         let geo;
         
         if (i < PHOTO_COUNT) {
-          // --- 照片 ---
-          const tex = activePhotoTextures[i % activePhotoTextures.length];
+          // --- 照片逻辑：优先使用用户照片，不足则使用默认 ---
+          let tex;
+          if (i < userTextures.length) {
+             tex = userTextures[i]; // 顺序填充
+          } else {
+             // 循环使用默认纹理填充剩余位置
+             tex = defaultPhotoTextures[i % defaultPhotoTextures.length];
+          }
+
           const scaleBase = 0.6 + Math.random() * 0.3;
           geo = new THREE.PlaneGeometry(1.0 * scaleBase, 1.2 * scaleBase);
           mat = new THREE.ShaderMaterial({
@@ -742,14 +743,17 @@ export default function App() {
         });
     }
 
-    // Input Handling: Unified Touch/Mouse Logic
+    // Input Handling: Pointer Events for Unified Touch/Mouse
     const onPointerDown = (e: PointerEvent | TouchEvent) => {
+        if (cameraActiveRef.current) return;
         const clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
         touchStartRef.current = { x: clientX, y: clientY, time: Date.now() };
     };
 
     const onPointerUp = (e: PointerEvent | TouchEvent) => {
+        if (cameraActiveRef.current) return;
+        
         const clientX = 'changedTouches' in e ? e.changedTouches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'changedTouches' in e ? e.changedTouches[0].clientY : (e as PointerEvent).clientY;
         
@@ -758,7 +762,8 @@ export default function App() {
         const dt = Date.now() - touchStartRef.current.time;
 
         // Detect Tap (short duration, small movement)
-        if (dt < 300 && Math.hypot(dx, dy) < 10) {
+        // 30px for better mobile experience
+        if (dt < 300 && Math.hypot(dx, dy) < 30) {
             handleRaycast(clientX, clientY);
         }
     };
@@ -781,7 +786,8 @@ export default function App() {
     // Use Pointer events for universal support
     window.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('pointerup', onPointerUp);
-    // Fallback
+    
+    // Fallback for Safari/iOS which sometimes needs specific touch listeners
     window.addEventListener('touchstart', onPointerDown, { passive: false });
     window.addEventListener('touchend', onPointerUp);
 
@@ -801,17 +807,19 @@ export default function App() {
               lastVideoTimeRef.current = nowInMs;
               const results = gestureRecognizerRef.current.recognizeForVideo(videoRef.current, nowInMs);
               
+              let currentHoverId = -1; 
+
               if (results.gestures.length > 0) {
                   const name = results.gestures[0][0].categoryName;
                   setGestureStatus(name);
-                  // 手势控制聚合/散落
+                  // 只有手势能控制聚合状态
                   if (name === 'Closed_Fist' && !isFormedRef.current) setFormed(true);
                   if (name === 'Open_Palm' && isFormedRef.current) setFormed(false);
 
                   if (results.landmarks.length > 0) {
                       const hand = results.landmarks[0];
                       const indexTip = hand[8];
-                      // Hand Tracking Parallax
+                      
                       const handX = (1 - indexTip.x) * 2 - 1;
                       const handY = -(indexTip.y) * 2 + 1;
                       interactionState.current.handPos.set(handX, handY);
@@ -925,7 +933,7 @@ export default function App() {
 
   return (
     <div className="relative w-full h-screen bg-slate-900 overflow-hidden select-none font-sans">
-      <div ref={mountRef} className="w-full h-full block" style={{ background: '#020408', touchAction: 'none' }} />
+      <div ref={mountRef} className="w-full h-full block" style={{ background: '#020408' }} />
       <video ref={videoRef} className="absolute top-0 left-0 w-64 h-48 opacity-0 pointer-events-none" autoPlay playsInline muted></video>
       
       {/* Hidden File Input */}
@@ -961,6 +969,7 @@ export default function App() {
           </p>
         </div>
       </div>
+      <div className="absolute top-0 left-0 w-full h-full border-[1px] border-white/5 pointer-events-none m-4 box-border w-[calc(100%-2rem)] h-[calc(100%-2rem)] rounded-3xl z-10 mix-blend-overlay" />
     </div>
   );
 }

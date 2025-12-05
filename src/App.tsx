@@ -6,7 +6,7 @@ import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision';
 // 1. 资源生成与工具函数
 // -----------------------------------------------------------------------------
 
-// 模拟拍立得纹理生成器 (保持不变)
+// 模拟拍立得纹理生成器
 const createPolaroidTexture = (content: string | HTMLImageElement, color: string) => {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
@@ -31,9 +31,10 @@ const createPolaroidTexture = (content: string | HTMLImageElement, color: string
     ctx.textBaseline = 'middle';
     ctx.fillText(content, 128, 128); 
     
+    // 2025 文案
     ctx.font = '20px "Courier New", monospace';
     ctx.fillStyle = '#666';
-    ctx.fillText("Dec 2025", 128, 270);
+    ctx.fillText("2025", 128, 270);
   } else {
     const aspect = content.width / content.height;
     let sw = content.width;
@@ -59,7 +60,7 @@ const createPolaroidTexture = (content: string | HTMLImageElement, color: string
   return texture;
 };
 
-// 简单的几何体合并工具函数 (用于构建复杂模型)
+// 简单的几何体合并工具函数
 const mergeBufferGeometries = (geometries: THREE.BufferGeometry[]) => {
   let vertexCount = 0;
   let indexCount = 0;
@@ -72,7 +73,7 @@ const mergeBufferGeometries = (geometries: THREE.BufferGeometry[]) => {
   const positionArray = new Float32Array(vertexCount * 3);
   const normalArray = new Float32Array(vertexCount * 3);
   const uvArray = new Float32Array(vertexCount * 2);
-  const colorArray = new Float32Array(vertexCount * 3); // 新增颜色属性
+  const colorArray = new Float32Array(vertexCount * 3); 
   const indexArray = indexCount > 0 ? new Uint32Array(indexCount) : null;
 
   let vOffset = 0;
@@ -82,15 +83,13 @@ const mergeBufferGeometries = (geometries: THREE.BufferGeometry[]) => {
     const pos = g.attributes.position;
     const norm = g.attributes.normal;
     const uv = g.attributes.uv;
-    const col = g.attributes.color; // 获取源几何体的颜色
+    const col = g.attributes.color; 
     
-    // Copy Attributes
     positionArray.set(pos.array, vOffset * 3);
     if (norm) normalArray.set(norm.array, vOffset * 3);
     if (uv) uvArray.set(uv.array, vOffset * 2);
-    if (col) colorArray.set(col.array, vOffset * 3); // 复制颜色
+    if (col) colorArray.set(col.array, vOffset * 3);
 
-    // Copy Indices
     if (g.index && indexArray) {
       for (let i = 0; i < g.index.count; i++) {
         indexArray[iOffset + i] = g.index.getX(i) + vOffset;
@@ -105,7 +104,7 @@ const mergeBufferGeometries = (geometries: THREE.BufferGeometry[]) => {
   merged.setAttribute('position', new THREE.BufferAttribute(positionArray, 3));
   merged.setAttribute('normal', new THREE.BufferAttribute(normalArray, 3));
   merged.setAttribute('uv', new THREE.BufferAttribute(uvArray, 2));
-  merged.setAttribute('color', new THREE.BufferAttribute(colorArray, 3)); // 设置合并后的颜色属性
+  merged.setAttribute('color', new THREE.BufferAttribute(colorArray, 3)); 
   if (indexArray) merged.setIndex(new THREE.BufferAttribute(indexArray, 1));
   
   return merged;
@@ -170,16 +169,15 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
 // -----------------------------------------------------------------------------
 // 2. 常量定义
 // -----------------------------------------------------------------------------
-const STAR_COUNT = 5000; // 增加星星数量，让星空更密集
-const PHOTO_COUNT = 150; // 用户照片数量
-const DECO_COUNT = 250;  // 装饰元素数量 (3D模型)
+const STAR_COUNT = 5000;
+const PHOTO_COUNT = 150; 
+const DECO_COUNT = 250;  
 const TOTAL_ITEMS = PHOTO_COUNT + DECO_COUNT;
 
 // -----------------------------------------------------------------------------
 // 3. 着色器 (Stars & Photo & Deco)
 // -----------------------------------------------------------------------------
 
-// 星星粒子 Shader (增强亮度与大小)
 const starVertexShader = `
   uniform float uTime;
   uniform float uProgress;
@@ -209,7 +207,6 @@ const starVertexShader = `
     float finalTwinkle = mix(twinkleBase, 1.0, t);
 
     float stateScale = mix(1.0, 0.8, t); 
-    // 增大系数 280.0 -> 450.0，让星星更明显
     gl_PointSize = aSize * stateScale * finalTwinkle * (450.0 / -mvPosition.z);
     gl_Position = projectionMatrix * mvPosition;
     vAlpha = aRandom; 
@@ -228,19 +225,15 @@ const starFragmentShader = `
     float glow = exp(-dist * dist * 50.0); 
     float strength = core * 3.0 + glow * 0.5;
     vec3 color = mix(uColorSub, uColorMain, vAlpha * 0.8 + 0.2);
-    // 增加核心白度，更亮
     color = mix(color, vec3(1.0), core * 0.8); 
     
     float alpha = strength * vAlpha;
-    // 降低剔除阈值，让微弱的星星也能显示
     if (alpha < 0.01) discard; 
     
-    // 稍微增强整体 alpha
     gl_FragColor = vec4(color, min(1.0, alpha * 1.5)); 
   }
 `;
 
-// 3D 装饰 Shader (增强质感)
 const decoVertexShader = `
   uniform float uTime;
   uniform float uProgress;
@@ -248,12 +241,12 @@ const decoVertexShader = `
   attribute vec3 aPosFormed;
   attribute vec3 aRandomVec; 
   attribute float aRandom;   
-  attribute vec3 color; // 接收顶点颜色
+  attribute vec3 color; 
   
   varying vec3 vNormal;
   varying vec3 vViewPosition;
   varying float vRandomVal;
-  varying vec3 vColor; //以此传递颜色
+  varying vec3 vColor; 
 
   float easeOutQuart(float x) {
     return 1.0 - pow(1.0 - x, 4.0);
@@ -273,29 +266,23 @@ const decoVertexShader = `
   void main() {
     float t = easeOutQuart(uProgress);
     vRandomVal = aRandom;
-    vColor = color; // 传递顶点颜色
+    vColor = color; 
 
     vec3 pos = mix(aPosChaos, aPosFormed, t);
     
-    // 漂浮
     vec3 floating = vec3(
       sin(uTime * 0.5 + aRandom * 20.0),
       cos(uTime * 0.3 + aRandom * 30.0),
       sin(uTime * 0.4 + aRandom * 40.0)
     ) * 0.2; 
     
-    // 旋转
     float rotSpeed = mix(2.0, 0.5, t); 
     float angle = uTime * rotSpeed * 0.5 + aRandom * 10.0;
     mat4 rotMat = rotationMatrix(aRandomVec, angle);
     
-    // 变换法线
     vNormal = normalize((rotMat * vec4(normal, 0.0)).xyz);
-    
-    // 变换顶点
     vec3 transformed = (rotMat * vec4(position, 1.0)).xyz;
     
-    // 缩放
     float scale = mix(0.0, 1.0, smoothstep(0.0, 0.2, uProgress + aRandom * 0.2));
     scale = mix(1.0, scale, t);
 
@@ -306,34 +293,24 @@ const decoVertexShader = `
 `;
 
 const decoFragmentShader = `
-  // uniform vec3 uBaseColor; // 不再需要统一颜色
   varying vec3 vNormal;
   varying vec3 vViewPosition;
   varying float vRandomVal;
-  varying vec3 vColor; // 使用顶点颜色
+  varying vec3 vColor; 
 
   void main() {
-    // 升级版 PBR 模拟
     vec3 normal = normalize(vNormal);
     vec3 viewDir = normalize(vViewPosition);
     vec3 lightDir = normalize(vec3(0.5, 1.0, 1.0)); 
 
-    // Diffuse
     float diff = max(dot(normal, lightDir), 0.0);
     
-    // Specular (高光 - 增强实物感)
     vec3 halfDir = normalize(lightDir + viewDir);
     float spec = pow(max(dot(normal, halfDir), 0.0), 64.0);
-    
-    // Fresnel (边缘光 - 增强立体感)
     float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
-
-    // 假的环境反射 (Fake Reflection) - 让物体看起来更有光泽
     float reflection = pow(max(dot(reflect(-viewDir, normal), vec3(0.0, 1.0, 0.0)), 0.0), 2.0);
 
-    vec3 color = vColor; // 使用顶点颜色
-    
-    // 混合光照: 基础色 + 漫反射 + 高光 + 边缘光 + 环境反射
+    vec3 color = vColor; 
     vec3 lighting = color * (0.3 + diff * 0.5) 
                   + vec3(1.0) * spec * 0.6 
                   + color * fresnel * 0.4
@@ -343,7 +320,6 @@ const decoFragmentShader = `
   }
 `;
 
-// 照片 Shader
 const photoVertexShader = `
   varying vec2 vUv;
   void main() {
@@ -401,6 +377,9 @@ export default function App() {
     hoveredPhotoId: -1
   });
 
+  // Tap Detection Ref
+  const touchStartRef = useRef({ x: 0, y: 0, time: 0 });
+
   useEffect(() => { 
     isFormedRef.current = isFormed; 
   }, [isFormed]);
@@ -409,7 +388,6 @@ export default function App() {
     cameraActiveRef.current = cameraActive;
   }, [cameraActive]);
 
-  // Hand Gesture Init
   useEffect(() => {
     let isMounted = true;
     const loadModel = async () => {
@@ -473,7 +451,6 @@ export default function App() {
     }
   };
 
-  // Upload Handler
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const files = Array.from(e.target.files);
@@ -503,7 +480,6 @@ export default function App() {
     }
   };
 
-  // --- Main 3D Logic ---
   useEffect(() => {
     if (!mountRef.current) return;
 
@@ -515,7 +491,18 @@ export default function App() {
     const width = mountRef.current.clientWidth;
     const height = mountRef.current.clientHeight;
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
-    camera.position.set(0, 0, 35); 
+    
+    // 自适应摄像机距离
+    const updateCameraDistance = () => {
+        const aspect = window.innerWidth / window.innerHeight;
+        const targetWidth = 75; 
+        const fovRad = (45 * Math.PI) / 180;
+        let dist = targetWidth / (2 * Math.tan(fovRad / 2) * aspect);
+        dist = Math.max(35, dist);
+        camera.position.set(0, 0, dist);
+        camera.lookAt(0, 0, 0);
+    };
+    updateCameraDistance();
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setSize(width, height);
@@ -582,9 +569,8 @@ export default function App() {
     const objects: any[] = [];
     const meshes: THREE.Mesh[] = [];
 
-    // --- 立体装饰几何体生成 (High Quality) ---
-    
-    // 辅助函数：为几何体设置颜色属性
+    // --- 辅助函数：设置几何体颜色 ---
+    // **Moved this function UP to be defined BEFORE it is used**
     const setGeometryColor = (geometry: THREE.BufferGeometry, color: THREE.Color) => {
         const count = geometry.attributes.position.count;
         const colors = new Float32Array(count * 3);
@@ -596,13 +582,15 @@ export default function App() {
         geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     };
 
-    // 1. 五角星: 使用 Extrude 挤压出厚度
+    // --- 立体装饰几何体生成 ---
+    
+    // 1. 五角星
     const createStarGeo = () => {
       const shape = new THREE.Shape();
       const points = 5;
       for (let i = 0; i < points * 2; i++) {
         const l = i % 2 === 0 ? 0.6 : 0.25;
-        const a = (i / (points * 2)) * Math.PI * 2 - Math.PI/2; // 旋转对正
+        const a = (i / (points * 2)) * Math.PI * 2 - Math.PI/2;
         const x = Math.cos(a) * l;
         const y = Math.sin(a) * l;
         if (i === 0) shape.moveTo(x, y);
@@ -613,48 +601,34 @@ export default function App() {
       geom.center();
       return geom.toNonIndexed();
     };
-    const geoStar = createStarGeo();
-
-    // 2. 礼物盒: 组合几何体 (盒子 + 丝带)
+    
     const createGiftGeo = () => {
-        const colGoldBox = new THREE.Color('#FFD700'); // 金黄色主盒
-        const colRedRibbon = new THREE.Color('#D62828'); // 红色丝带
+        const colGoldBox = new THREE.Color('#FFD700'); 
+        const colRedRibbon = new THREE.Color('#D62828'); 
 
-        // 主盒体
         const boxGeo = new THREE.BoxGeometry(0.7, 0.7, 0.7).toNonIndexed();
-        setGeometryColor(boxGeo, colGoldBox);
+        setGeometryColor(boxGeo, colGoldBox); // Now valid
 
-        // 丝带 - 垂直
         const ribbon1 = new THREE.BoxGeometry(0.75, 0.75, 0.2).toNonIndexed();
         setGeometryColor(ribbon1, colRedRibbon);
         
-        // 丝带 - 水平
         const ribbon2 = new THREE.BoxGeometry(0.2, 0.75, 0.75).toNonIndexed();
         setGeometryColor(ribbon2, colRedRibbon);
         
-        // 合并几何体 (手动合并 BufferAttribute)
         const geometries = [boxGeo, ribbon1, ribbon2];
         const merged = mergeBufferGeometries(geometries);
         merged.center();
         return merged;
     };
-    const geoGift = createGiftGeo();
-
-    // 3. 枫叶 (已移除)
-
-    // 4. 雪花: 旋转复制长条
+    
     const createSnowGeo = () => {
-        // 创建一个分支
         const barGeo = new THREE.BoxGeometry(0.08, 0.9, 0.05).toNonIndexed();
-        // 分支上的小叉
         const forkGeo = new THREE.BoxGeometry(0.3, 0.05, 0.05).toNonIndexed();
-        forkGeo.translate(0, 0.25, 0); // 移动到上部
+        forkGeo.translate(0, 0.25, 0); 
         
-        // 组合成一个轴
         const axisParts = [barGeo, forkGeo];
         const axisGeo = mergeBufferGeometries(axisParts);
 
-        // 旋转复制 3 个轴 (0, 60, 120 度)
         const parts = [];
         for(let i=0; i<3; i++) {
             const g = axisGeo.clone();
@@ -666,11 +640,15 @@ export default function App() {
         finalSnow.center();
         return finalSnow;
     };
-    const geoSnow = createSnowGeo();
 
-    // --- 装饰材质色 (Deco Colors) ---
-    const colGold = new THREE.Color('#FFD700'); // 星星颜色
-    const colSilver = new THREE.Color('#C0C0C0'); // 雪花颜色 (银白色)
+    // 创建几何体模板
+    const geoStar = createStarGeo();
+    const geoGift = createGiftGeo();
+    const geoSnow = createSnowGeo();
+    
+    // 装饰材质色
+    const colGold = new THREE.Color('#FFD700'); 
+    const colSilver = new THREE.Color('#C0C0C0'); 
 
     for(let i=0; i<TOTAL_ITEMS; i++) {
         let isDeco = false;
@@ -690,20 +668,18 @@ export default function App() {
         } else {
           // --- 装饰 (3D Mesh) ---
           isDeco = true;
-          // 修改了类型索引，移除枫叶，只剩下三种装饰
           const decoType = i % 3; 
           
           if (decoType === 0) { 
             geo = geoStar.clone(); 
-            setGeometryColor(geo, colGold); // 为星星设置金色
+            setGeometryColor(geo, colGold); 
           }
           else if (decoType === 1) { 
             geo = geoGift.clone(); 
-            // 礼物盒自带颜色，不需要设置
           }
           else { 
             geo = geoSnow.clone(); 
-            setGeometryColor(geo, colSilver); // 为雪花设置银白色
+            setGeometryColor(geo, colSilver); 
           }
 
           mat = new THREE.ShaderMaterial({
@@ -712,7 +688,6 @@ export default function App() {
             uniforms: {
               uTime: { value: 0 },
               uProgress: { value: 0 },
-              // uBaseColor 已移除，使用顶点颜色
             },
           });
         }
@@ -721,7 +696,6 @@ export default function App() {
         scene.add(mesh);
         meshes.push(mesh);
 
-        // Position Logic
         const r = 40 * Math.cbrt(Math.random());
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
@@ -734,7 +708,6 @@ export default function App() {
           formedBase.z + (Math.random()-0.5) * (isDeco ? 3.0 : 1.0) 
         );
 
-        // Inject Attributes
         if (isDeco) {
            const count = mesh.geometry.attributes.position.count;
            const aPosChaos = new Float32Array(count * 3);
@@ -763,13 +736,39 @@ export default function App() {
         });
     }
 
-    // Input Handling
-    const onMouseClick = (event: MouseEvent) => {
-        const mouse = new THREE.Vector2((event.clientX / window.innerWidth) * 2 - 1, -(event.clientY / window.innerHeight) * 2 + 1);
+    // Input Handling: Pointer Events for Unified Touch/Mouse
+    const onPointerDown = (e: PointerEvent | TouchEvent) => {
+        if (cameraActiveRef.current) return;
+        // setFormed(true); // 移除自动聚合
+        const clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
+        const clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
+        touchStartRef.current = { x: clientX, y: clientY, time: Date.now() };
+    };
+
+    const onPointerUp = (e: PointerEvent | TouchEvent) => {
+        if (cameraActiveRef.current) return;
+        // setFormed(false); // 移除自动散开
+        
+        const clientX = 'changedTouches' in e ? e.changedTouches[0].clientX : (e as PointerEvent).clientX;
+        const clientY = 'changedTouches' in e ? e.changedTouches[0].clientY : (e as PointerEvent).clientY;
+        
+        const dx = clientX - touchStartRef.current.x;
+        const dy = clientY - touchStartRef.current.y;
+        const dt = Date.now() - touchStartRef.current.time;
+
+        // Detect Tap (short duration, small movement)
+        if (dt < 300 && Math.hypot(dx, dy) < 10) {
+            handleRaycast(clientX, clientY);
+        }
+    };
+
+    const handleRaycast = (clientX: number, clientY: number) => {
+        const mouse = new THREE.Vector2((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
         raycaster.setFromCamera(mouse, camera);
         const intersects = raycaster.intersectObjects(meshes);
         if (intersects.length > 0) {
             const obj = objects.find(p => p.mesh === intersects[0].object);
+            // Only toggle photos
             if (obj && !obj.isDeco) {
                 interactionState.current.activePhotoId = (interactionState.current.activePhotoId === obj.id) ? -1 : obj.id;
             }
@@ -778,9 +777,11 @@ export default function App() {
         }
     };
 
-    window.addEventListener('click', onMouseClick);
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('touchstart', onPointerDown, { passive: false });
+    window.addEventListener('touchend', onPointerUp);
 
-    // Animation Loop
     const clock = new THREE.Clock();
     let reqId: number;
 
@@ -865,22 +866,18 @@ export default function App() {
           }
       }
 
-      // Update Stars
       if (starMat.uniforms) {
           starMat.uniforms.uTime.value = time;
           const targetP = isFormedRef.current ? 1 : 0;
           starMat.uniforms.uProgress.value = THREE.MathUtils.lerp(starMat.uniforms.uProgress.value, targetP, 1 - Math.exp(-3.0 * delta));
       }
 
-      // Update Camera
       const targetX = (camActive ? interactionState.current.handPos.x : mouseRef.current.x) * 3.0;
       const targetY = (camActive ? interactionState.current.handPos.y : mouseRef.current.y) * 3.0;
       camera.position.x += (targetX - camera.position.x) * 0.05;
       camera.position.y += (targetY - camera.position.y) * 0.05;
       camera.lookAt(0, 0, 0);
 
-      // Objects (Photos & Decos)
-      // Only drag if pinched
       if (interactionState.current.isPinching && interactionState.current.grabbedPhotoId === -1 && interactionState.current.activePhotoId === -1) {
           raycaster.setFromCamera(interactionState.current.handPos, camera);
           const intersects = raycaster.intersectObjects(meshes);
@@ -891,7 +888,6 @@ export default function App() {
       }
       if (!interactionState.current.isPinching) interactionState.current.grabbedPhotoId = -1;
 
-      // Update Uniforms for Shaders (Time & Progress)
       const uProgress = starMat.uniforms.uProgress.value;
 
       objects.forEach(p => {
@@ -899,13 +895,10 @@ export default function App() {
           const isGrabbed = interactionState.current.grabbedPhotoId === p.id;
           const isHovered = interactionState.current.hoveredPhotoId === p.id;
           
-          // Shader Uniforms Update (Mesh specific)
-          // 对于 3D 装饰，我们需要更新 Shader 中的 uTime 和 uProgress
           if (p.isDeco) {
              (p.mesh.material as THREE.ShaderMaterial).uniforms.uTime.value = time;
              (p.mesh.material as THREE.ShaderMaterial).uniforms.uProgress.value = uProgress;
           } else {
-             // 2D 照片 (JS Animation)
              p.currentPos.lerpVectors(p.chaosPos, p.formedPos, uProgress); 
 
               let targetPos = new THREE.Vector3();
@@ -964,6 +957,7 @@ export default function App() {
        camera.aspect = w/h;
        camera.updateProjectionMatrix();
        renderer.setSize(w, h);
+       updateCameraDistance(); // 窗口变化时重新计算距离
     };
     const handleMouseMove = (e: MouseEvent) => {
         if (!cameraActive) {
@@ -978,7 +972,14 @@ export default function App() {
     return () => {
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('click', onMouseClick);
+      
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('touchstart', onPointerDown);
+      window.removeEventListener('touchend', onPointerUp);
+      
+      // Cleanup removed undefined reference
+      
       cancelAnimationFrame(reqId);
       if(mountRef.current) mountRef.current.innerHTML = '';
       starGeo.dispose();
@@ -1035,7 +1036,7 @@ export default function App() {
       <div className="absolute top-0 left-0 w-full h-full pointer-events-none flex flex-col items-center justify-end pb-10 z-10">
         <div className="mt-4 flex flex-col items-center gap-2 text-yellow-100/60 text-sm tracking-widest font-light uppercase">
           <p className="animate-pulse opacity-80 bg-black/20 px-4 py-1 rounded-full backdrop-blur-sm">
-            {cameraActive ? '✊ Fist: Form | 🖐 Palm: Scatter | 🤏x2: Zoom Photo' : 'Enable Camera to Interact'}
+            {cameraActive ? '✊ Fist: Form | 🖐 Palm: Scatter | 🤏x2: Zoom Photo' : 'Click Photos to View'}
           </p>
         </div>
       </div>

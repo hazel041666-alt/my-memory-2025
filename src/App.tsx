@@ -31,7 +31,6 @@ const createPolaroidTexture = (content: string | HTMLImageElement, color: string
     ctx.textBaseline = 'middle';
     ctx.fillText(content, 128, 128); 
     
-    // 2025 文案
     ctx.font = '20px "Courier New", monospace';
     ctx.fillStyle = '#666';
     ctx.fillText("2025", 128, 270);
@@ -110,11 +109,11 @@ const mergeBufferGeometries = (geometries: THREE.BufferGeometry[]) => {
   return merged;
 };
 
-// 生成文字 "2025" 的点阵坐标
+// 生成文字 "2025" 的点阵坐标 (Verdana 字体，极高清晰度)
 const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
   const canvas = document.createElement('canvas');
-  const width = 400;
-  const height = 200;
+  const width = 1024;
+  const height = 512;
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d');
@@ -123,29 +122,35 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, width, height);
   
-  ctx.font = '900 120px "Arial Black", "Impact", sans-serif';
+  // 使用 Verdana 字体，字形宽阔，辨识度高
+  ctx.font = 'bold 320px "Verdana", "Arial", sans-serif';
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(text, width / 2, height / 2);
+  
+  // 增加一点字间距
+  const textString = text.split('').join(String.fromCharCode(8202)); 
+  ctx.fillText(textString, width / 2, height / 2);
 
   const imageData = ctx.getImageData(0, 0, width, height);
   const data = imageData.data;
   let points: THREE.Vector3[] = [];
 
+  // 降低采样步长，获取更多细节点，确保 '5' 的弯钩完整
   const step = 4; 
 
   for (let y = 0; y < height; y += step) {
     for (let x = 0; x < width; x += step) {
       const index = (y * width + x) * 4;
-      if (data[index] > 50) {
-        const pX = (x / width - 0.5) * 60; 
-        const pY = -(y / height - 0.5) * 30; 
+      if (data[index] > 100) { 
+        const pX = (x / width - 0.5) * 75; 
+        const pY = -(y / height - 0.5) * 35; 
         points.push(new THREE.Vector3(pX, pY, 0));
       }
     }
   }
   
+  // 随机打乱
   for (let i = points.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [points[i], points[j]] = [points[j], points[i]];
@@ -157,9 +162,9 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
   for (let i = 0; i < count; i++) {
     const p = points[i % points.length];
     result.push(new THREE.Vector3(
-      p.x + (Math.random() - 0.5) * 0.5, 
-      p.y + (Math.random() - 0.5) * 0.5, 
-      (Math.random() - 0.5) * 1.0 
+      p.x, // 移除随机抖动，保持绝对清晰
+      p.y, 
+      0    // Z轴完全拍平
     ));
   }
   
@@ -171,7 +176,7 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
 // -----------------------------------------------------------------------------
 const STAR_COUNT = 5000;
 const PHOTO_COUNT = 150; 
-const DECO_COUNT = 250;  
+const DECO_COUNT = 250;  // 装饰物数量
 const TOTAL_ITEMS = PHOTO_COUNT + DECO_COUNT;
 
 // -----------------------------------------------------------------------------
@@ -394,7 +399,7 @@ export default function App() {
       try {
         console.log("Loading MediaPipe Vision...");
         const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
         );
         if (!isMounted) return;
         
@@ -486,11 +491,11 @@ export default function App() {
     // 1. Init Scene
     const scene = new THREE.Scene();
     scene.background = new THREE.Color('#020408');
-    scene.fog = new THREE.Fog('#020408', 20, 80);
+    scene.fog = new THREE.Fog('#020408', 20, 200); 
 
     const width = mountRef.current.clientWidth;
     const height = mountRef.current.clientHeight;
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 500);
     
     // 自适应摄像机距离
     const updateCameraDistance = () => {
@@ -510,6 +515,7 @@ export default function App() {
     mountRef.current.appendChild(renderer.domElement);
 
     const raycaster = new THREE.Raycaster();
+    raycaster.params.Points = { threshold: 1.0 };
 
     // 2. Generate "2025" Positions
     const textTargetPositions = generateTextLayout("2025", TOTAL_ITEMS);
@@ -522,7 +528,7 @@ export default function App() {
     const sRandoms = new Float32Array(STAR_COUNT);
     
     for(let i=0; i<STAR_COUNT; i++) {
-        const r = 60 * Math.cbrt(Math.random()); 
+        const r = 80 * Math.cbrt(Math.random()); 
         const theta = Math.random()*Math.PI*2; 
         const phi = Math.acos(2*Math.random()-1);
         sPosChaos[i*3] = r*Math.sin(phi)*Math.cos(theta); 
@@ -570,7 +576,7 @@ export default function App() {
     const meshes: THREE.Mesh[] = [];
 
     // --- 辅助函数：设置几何体颜色 ---
-    // **Moved this function UP to be defined BEFORE it is used**
+    // **Fixed: Defined before use**
     const setGeometryColor = (geometry: THREE.BufferGeometry, color: THREE.Color) => {
         const count = geometry.attributes.position.count;
         const colors = new Float32Array(count * 3);
@@ -602,12 +608,13 @@ export default function App() {
       return geom.toNonIndexed();
     };
     
+    // 2. 礼物盒
     const createGiftGeo = () => {
         const colGoldBox = new THREE.Color('#FFD700'); 
         const colRedRibbon = new THREE.Color('#D62828'); 
 
         const boxGeo = new THREE.BoxGeometry(0.7, 0.7, 0.7).toNonIndexed();
-        setGeometryColor(boxGeo, colGoldBox); // Now valid
+        setGeometryColor(boxGeo, colGoldBox); 
 
         const ribbon1 = new THREE.BoxGeometry(0.75, 0.75, 0.2).toNonIndexed();
         setGeometryColor(ribbon1, colRedRibbon);
@@ -621,6 +628,7 @@ export default function App() {
         return merged;
     };
     
+    // 3. 雪花
     const createSnowGeo = () => {
         const barGeo = new THREE.BoxGeometry(0.08, 0.9, 0.05).toNonIndexed();
         const forkGeo = new THREE.BoxGeometry(0.3, 0.05, 0.05).toNonIndexed();
@@ -641,12 +649,10 @@ export default function App() {
         return finalSnow;
     };
 
-    // 创建几何体模板
     const geoStar = createStarGeo();
     const geoGift = createGiftGeo();
     const geoSnow = createSnowGeo();
     
-    // 装饰材质色
     const colGold = new THREE.Color('#FFD700'); 
     const colSilver = new THREE.Color('#C0C0C0'); 
 
@@ -736,19 +742,14 @@ export default function App() {
         });
     }
 
-    // Input Handling: Pointer Events for Unified Touch/Mouse
+    // Input Handling: Unified Touch/Mouse Logic
     const onPointerDown = (e: PointerEvent | TouchEvent) => {
-        if (cameraActiveRef.current) return;
-        // setFormed(true); // 移除自动聚合
         const clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
         touchStartRef.current = { x: clientX, y: clientY, time: Date.now() };
     };
 
     const onPointerUp = (e: PointerEvent | TouchEvent) => {
-        if (cameraActiveRef.current) return;
-        // setFormed(false); // 移除自动散开
-        
         const clientX = 'changedTouches' in e ? e.changedTouches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'changedTouches' in e ? e.changedTouches[0].clientY : (e as PointerEvent).clientY;
         
@@ -777,8 +778,10 @@ export default function App() {
         }
     };
 
+    // Use Pointer events for universal support
     window.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('pointerup', onPointerUp);
+    // Fallback
     window.addEventListener('touchstart', onPointerDown, { passive: false });
     window.addEventListener('touchend', onPointerUp);
 
@@ -798,107 +801,51 @@ export default function App() {
               lastVideoTimeRef.current = nowInMs;
               const results = gestureRecognizerRef.current.recognizeForVideo(videoRef.current, nowInMs);
               
-              let currentHoverId = -1; 
-
               if (results.gestures.length > 0) {
                   const name = results.gestures[0][0].categoryName;
                   setGestureStatus(name);
-                  // 只有手势能控制聚合状态
+                  // 手势控制聚合/散落
                   if (name === 'Closed_Fist' && !isFormedRef.current) setFormed(true);
                   if (name === 'Open_Palm' && isFormedRef.current) setFormed(false);
 
                   if (results.landmarks.length > 0) {
                       const hand = results.landmarks[0];
                       const indexTip = hand[8];
-                      const thumbTip = hand[4];
-                      
+                      // Hand Tracking Parallax
                       const handX = (1 - indexTip.x) * 2 - 1;
                       const handY = -(indexTip.y) * 2 + 1;
                       interactionState.current.handPos.set(handX, handY);
-                      
-                      const dist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
-                      const isPinching = dist < 0.05;
-                      
-                      // Double Pinch Detection
-                      if (isPinching !== interactionState.current.lastPinchStatus) {
-                          if (isPinching) {
-                              interactionState.current.pinchStartTime = nowInMs;
-                          } else {
-                              const pinchDuration = nowInMs - interactionState.current.pinchStartTime;
-                              if (pinchDuration < 300) {
-                                  const timeSinceLastTap = nowInMs - interactionState.current.lastTapTime;
-                                  if (timeSinceLastTap < 500) {
-                                      // Double Pinch!
-                                      raycaster.setFromCamera(interactionState.current.handPos, camera);
-                                      const intersects = raycaster.intersectObjects(meshes);
-                                      if (intersects.length > 0) {
-                                          const obj = objects.find(p => p.mesh === intersects[0].object);
-                                          if (obj && !obj.isDeco) {
-                                               interactionState.current.activePhotoId = (interactionState.current.activePhotoId === obj.id) ? -1 : obj.id;
-                                          }
-                                      }
-                                  }
-                                  interactionState.current.lastTapTime = nowInMs;
-                              }
-                          }
-                      }
-                      interactionState.current.lastPinchStatus = isPinching;
-                      interactionState.current.isPinching = isPinching;
-
-                      // Hover / Highlight
-                      if (!isFormedRef.current) {
-                          raycaster.setFromCamera(interactionState.current.handPos, camera);
-                          const intersects = raycaster.intersectObjects(meshes);
-                          if (intersects.length > 0) {
-                              const obj = objects.find(p => p.mesh === intersects[0].object);
-                              if (obj && !obj.isDeco) {
-                                  currentHoverId = obj.id;
-                              }
-                          }
-                      }
                   }
               } else {
                   setGestureStatus('None');
-                  interactionState.current.isPinching = false;
-                  interactionState.current.lastPinchStatus = false;
               }
-              interactionState.current.hoveredPhotoId = currentHoverId;
           }
       }
 
+      // Update Stars
       if (starMat.uniforms) {
           starMat.uniforms.uTime.value = time;
           const targetP = isFormedRef.current ? 1 : 0;
           starMat.uniforms.uProgress.value = THREE.MathUtils.lerp(starMat.uniforms.uProgress.value, targetP, 1 - Math.exp(-3.0 * delta));
       }
 
+      // Update Camera
       const targetX = (camActive ? interactionState.current.handPos.x : mouseRef.current.x) * 3.0;
       const targetY = (camActive ? interactionState.current.handPos.y : mouseRef.current.y) * 3.0;
       camera.position.x += (targetX - camera.position.x) * 0.05;
       camera.position.y += (targetY - camera.position.y) * 0.05;
       camera.lookAt(0, 0, 0);
 
-      if (interactionState.current.isPinching && interactionState.current.grabbedPhotoId === -1 && interactionState.current.activePhotoId === -1) {
-          raycaster.setFromCamera(interactionState.current.handPos, camera);
-          const intersects = raycaster.intersectObjects(meshes);
-          if (intersects.length > 0) {
-              const obj = objects.find(p => p.mesh === intersects[0].object);
-              if (obj) interactionState.current.grabbedPhotoId = obj.id;
-          }
-      }
-      if (!interactionState.current.isPinching) interactionState.current.grabbedPhotoId = -1;
-
       const uProgress = starMat.uniforms.uProgress.value;
 
       objects.forEach(p => {
           const isActive = interactionState.current.activePhotoId === p.id;
-          const isGrabbed = interactionState.current.grabbedPhotoId === p.id;
-          const isHovered = interactionState.current.hoveredPhotoId === p.id;
           
           if (p.isDeco) {
              (p.mesh.material as THREE.ShaderMaterial).uniforms.uTime.value = time;
              (p.mesh.material as THREE.ShaderMaterial).uniforms.uProgress.value = uProgress;
           } else {
+             // 2D 照片 (JS Animation)
              p.currentPos.lerpVectors(p.chaosPos, p.formedPos, uProgress); 
 
               let targetPos = new THREE.Vector3();
@@ -911,12 +858,6 @@ export default function App() {
                   targetPos.copy(camera.position).add(camDir.multiplyScalar(6)); 
                   targetRot.set(camera.rotation.x, camera.rotation.y, camera.rotation.z);
                   targetScale = 3.0; 
-              } else if (isGrabbed) {
-                  raycaster.setFromCamera(interactionState.current.handPos, camera);
-                  const distance = camera.position.z - p.formedPos.z; 
-                  raycaster.ray.at(distance, targetPos);
-                  targetRot.set(0, 0, 0);
-                  targetScale = 1.2;
               } else {
                   const floatX = Math.sin(time * 0.5 + p.floatOffset) * 0.2; 
                   const floatY = Math.cos(time * 0.3 + p.floatOffset) * 0.2;
@@ -929,20 +870,15 @@ export default function App() {
                       targetRot.copy(p.randomRot);
                       targetRot.x += Math.sin(time * 0.1) * 0.2;
                   }
-                  
-                  if (isHovered && !isFormedRef.current) {
-                      targetScale = 1.3;
-                      targetRot.set(0, 0, 0);
-                  }
               }
 
-              const speed = (isActive || isGrabbed || isHovered) ? 0.2 : 0.05; 
+              const speed = isActive ? 0.15 : 0.05; 
               p.mesh.position.lerp(targetPos, speed);
               p.mesh.rotation.x += (targetRot.x - p.mesh.rotation.x) * speed;
               p.mesh.rotation.y += (targetRot.y - p.mesh.rotation.y) * speed;
               p.mesh.rotation.z += (targetRot.z - p.mesh.rotation.z) * speed;
               p.mesh.scale.setScalar(THREE.MathUtils.lerp(p.mesh.scale.x, targetScale, speed));
-              p.mesh.renderOrder = isActive ? 999 : (isHovered ? 500 : 0); 
+              p.mesh.renderOrder = isActive ? 999 : (p.isDeco ? 1 : 0); 
           }
       });
 
@@ -957,7 +893,7 @@ export default function App() {
        camera.aspect = w/h;
        camera.updateProjectionMatrix();
        renderer.setSize(w, h);
-       updateCameraDistance(); // 窗口变化时重新计算距离
+       updateCameraDistance(); 
     };
     const handleMouseMove = (e: MouseEvent) => {
         if (!cameraActive) {
@@ -978,8 +914,6 @@ export default function App() {
       window.removeEventListener('touchstart', onPointerDown);
       window.removeEventListener('touchend', onPointerUp);
       
-      // Cleanup removed undefined reference
-      
       cancelAnimationFrame(reqId);
       if(mountRef.current) mountRef.current.innerHTML = '';
       starGeo.dispose();
@@ -991,7 +925,7 @@ export default function App() {
 
   return (
     <div className="relative w-full h-screen bg-slate-900 overflow-hidden select-none font-sans">
-      <div ref={mountRef} className="w-full h-full block" style={{ background: '#020408' }} />
+      <div ref={mountRef} className="w-full h-full block" style={{ background: '#020408', touchAction: 'none' }} />
       <video ref={videoRef} className="absolute top-0 left-0 w-64 h-48 opacity-0 pointer-events-none" autoPlay playsInline muted></video>
       
       {/* Hidden File Input */}
@@ -1004,9 +938,8 @@ export default function App() {
         onChange={handleUpload}
       />
 
-      {/* Controls Container - Top Right Fixed */}
-      <div className="fixed top-6 right-6 z-50 flex flex-col gap-3 items-end">
-         
+      {/* Controls Container - Top Left */}
+      <div className="fixed top-6 left-6 z-50 flex flex-col gap-3 items-start">
          <div className="flex gap-3">
             <button onClick={enableCam} className={`px-5 py-2 rounded-full border border-white/20 text-xs font-bold tracking-widest uppercase transition-all backdrop-blur-md shadow-lg ${cameraActive ? 'bg-red-500/20 text-red-200 border-red-500/50' : 'bg-black/30 text-white hover:bg-white/10'} ${!modelLoaded ? 'opacity-50 cursor-not-allowed' : ''}`}>
               {!modelLoaded ? 'Loading AI...' : (cameraActive ? 'Stop Camera' : 'Start Camera')}
@@ -1016,31 +949,18 @@ export default function App() {
               onClick={() => fileInputRef.current?.click()} 
               className="px-5 py-2 rounded-full border border-white/20 text-xs font-bold tracking-widest uppercase transition-all bg-black/30 text-white hover:bg-white/10 backdrop-blur-md shadow-lg"
             >
-              Upload Photos
+              Upload
             </button>
          </div>
-
-         {cameraActive && (
-           <div className="bg-black/60 backdrop-blur-md p-4 rounded-xl border border-white/10 text-xs text-white/80 font-mono shadow-lg text-right">
-             <div className="flex items-center justify-end gap-2 mb-2">CAMERA ACTIVE<span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span></div>
-             <p className="mb-2">Status: <span className="text-yellow-400 font-bold">{gestureStatus}</span></p>
-             <div className="space-y-1 opacity-70">
-               <p>🤏 PINCH x2: Zoom Photo</p>
-               <p>✊ FIST: Form "2025"</p>
-               <p>🖐 PALM: Scatter</p>
-             </div>
-           </div>
-         )}
       </div>
 
-      <div className="absolute top-0 left-0 w-full h-full pointer-events-none flex flex-col items-center justify-end pb-10 z-10">
+      <div className="absolute bottom-10 left-0 w-full pointer-events-none flex flex-col items-center justify-end z-10">
         <div className="mt-4 flex flex-col items-center gap-2 text-yellow-100/60 text-sm tracking-widest font-light uppercase">
           <p className="animate-pulse opacity-80 bg-black/20 px-4 py-1 rounded-full backdrop-blur-sm">
-            {cameraActive ? '✊ Fist: Form | 🖐 Palm: Scatter | 🤏x2: Zoom Photo' : 'Click Photos to View'}
+            {cameraActive ? '✊ Fist: Form | 🖐 Palm: Scatter' : 'Tap Photos to View'}
           </p>
         </div>
       </div>
-      <div className="absolute top-0 left-0 w-full h-full border-[1px] border-white/5 pointer-events-none m-4 box-border w-[calc(100%-2rem)] h-[calc(100%-2rem)] rounded-3xl z-10 mix-blend-overlay" />
     </div>
   );
 }

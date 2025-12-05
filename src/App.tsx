@@ -9,7 +9,6 @@ import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision';
 // 模拟拍立得纹理生成器 (高清版)
 const createPolaroidTexture = (content: string | HTMLImageElement, color: string) => {
   const canvas = document.createElement('canvas');
-  // 提升分辨率至 1024x1200 以保证放大后的清晰度
   canvas.width = 1024;
   canvas.height = 1200; 
   const ctx = canvas.getContext('2d');
@@ -48,6 +47,8 @@ const createPolaroidTexture = (content: string | HTMLImageElement, color: string
       sh = content.width;
       sy = (content.height - content.width) / 2;
     }
+    ctx.shadowColor = "transparent";
+    ctx.shadowBlur = 0;
     ctx.drawImage(content, sx, sy, sw, sh, 80, 80, 864, 864);
     
     ctx.font = '64px "Courier New", monospace';
@@ -56,8 +57,6 @@ const createPolaroidTexture = (content: string | HTMLImageElement, color: string
   }
 
   const texture = new THREE.CanvasTexture(canvas);
-  // 关键：标记纹理为 sRGB，配合渲染器的 outputColorSpace 使用
-  texture.colorSpace = THREE.SRGBColorSpace;
   texture.minFilter = THREE.LinearMipMapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
   return texture;
@@ -430,7 +429,7 @@ export default function App() {
       try {
         console.log("Loading MediaPipe Vision...");
         const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
         );
         if (!isMounted) return;
         
@@ -540,11 +539,11 @@ export default function App() {
     };
     updateCameraDistance();
 
-    // 关键修复：设置 outputColorSpace 为 SRGB，解决照片变暗问题
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.outputColorSpace = THREE.SRGBColorSpace; // 修复色彩
+    renderer.outputColorSpace = THREE.SRGBColorSpace; 
+    renderer.toneMapping = THREE.NoToneMapping; 
     mountRef.current.appendChild(renderer.domElement);
 
     const raycaster = new THREE.Raycaster();
@@ -594,7 +593,7 @@ export default function App() {
     stars.frustumCulled = false; 
     scene.add(stars);
 
-    // 4. Photos & Decorations (Meshes)
+    // 4. Photos & Decorations
     const defaultPhotoTextures = [
       createPolaroidTexture('2025', '#ff9a9e'),
       createPolaroidTexture('HOPE', '#a18cd1'),
@@ -608,7 +607,6 @@ export default function App() {
     const objects: any[] = [];
     const meshes: THREE.Mesh[] = [];
 
-    // --- 辅助函数：设置几何体颜色 ---
     const setGeometryColor = (geometry: THREE.BufferGeometry, color: THREE.Color) => {
         const count = geometry.attributes.position.count;
         const colors = new Float32Array(count * 3);
@@ -621,8 +619,6 @@ export default function App() {
     };
 
     // --- 立体装饰几何体生成 ---
-    
-    // 1. 五角星
     const createStarGeo = () => {
       const shape = new THREE.Shape();
       const points = 5;
@@ -640,42 +636,33 @@ export default function App() {
       return geom.toNonIndexed();
     };
     
-    // 2. 礼物盒
     const createGiftGeo = () => {
         const colGoldBox = new THREE.Color('#FFD700'); 
         const colRedRibbon = new THREE.Color('#D62828'); 
-
         const boxGeo = new THREE.BoxGeometry(0.7, 0.7, 0.7).toNonIndexed();
         setGeometryColor(boxGeo, colGoldBox); 
-
         const ribbon1 = new THREE.BoxGeometry(0.75, 0.75, 0.2).toNonIndexed();
         setGeometryColor(ribbon1, colRedRibbon);
-        
         const ribbon2 = new THREE.BoxGeometry(0.2, 0.75, 0.75).toNonIndexed();
         setGeometryColor(ribbon2, colRedRibbon);
-        
         const geometries = [boxGeo, ribbon1, ribbon2];
         const merged = mergeBufferGeometries(geometries);
         merged.center();
         return merged;
     };
     
-    // 3. 雪花
     const createSnowGeo = () => {
         const barGeo = new THREE.BoxGeometry(0.08, 0.9, 0.05).toNonIndexed();
         const forkGeo = new THREE.BoxGeometry(0.3, 0.05, 0.05).toNonIndexed();
         forkGeo.translate(0, 0.25, 0); 
-        
         const axisParts = [barGeo, forkGeo];
         const axisGeo = mergeBufferGeometries(axisParts);
-
         const parts = [];
         for(let i=0; i<3; i++) {
             const g = axisGeo.clone();
             g.rotateZ((i * Math.PI) / 1.5);
             parts.push(g);
         }
-        
         const finalSnow = mergeBufferGeometries(parts);
         finalSnow.center();
         return finalSnow;
@@ -781,15 +768,12 @@ export default function App() {
 
     // Input Handling: Pointer Events for Unified Touch/Mouse
     const onPointerDown = (e: PointerEvent | TouchEvent) => {
-        if (cameraActiveRef.current) return;
         const clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
         touchStartRef.current = { x: clientX, y: clientY, time: Date.now() };
     };
 
     const onPointerUp = (e: PointerEvent | TouchEvent) => {
-        if (cameraActiveRef.current) return;
-        
         const clientX = 'changedTouches' in e ? e.changedTouches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'changedTouches' in e ? e.changedTouches[0].clientY : (e as PointerEvent).clientY;
         
@@ -798,6 +782,7 @@ export default function App() {
         const dt = Date.now() - touchStartRef.current.time;
 
         // Detect Tap (short duration, small movement)
+        // 30px for better mobile experience
         if (dt < 300 && Math.hypot(dx, dy) < 30) {
             handleRaycast(clientX, clientY);
         }
@@ -808,7 +793,7 @@ export default function App() {
         raycaster.setFromCamera(mouse, camera);
         const intersects = raycaster.intersectObjects(meshes);
         
-        // Find direct hit first
+        // 1. Direct hit
         let targetId = -1;
         if (intersects.length > 0) {
             const obj = objects.find(p => p.mesh === intersects[0].object);
@@ -816,21 +801,20 @@ export default function App() {
                 targetId = obj.id;
             }
         }
-
-        // If missed, use Random Zoom (Mobile Friendly)
+        
+        // 2. Smart Magnetism (Mobile Friendly)
+        // If direct hit failed, find closest photo within 50px radius
         if (targetId === -1) {
             // Mobile check
             const isMobile = window.innerWidth < 768;
             if (isMobile) {
-               // Randomly pick a photo
+               // Randomly pick a photo (per user request for mobile experience)
                targetId = Math.floor(Math.random() * PHOTO_COUNT);
             }
         }
 
         // Apply selection
         if (targetId !== -1) {
-             // If already active, maybe don't toggle off to avoid confusion, rely on close button
-             // Or toggle. Let's do set active.
              setActivePhoto(targetId);
         }
     };
@@ -1013,29 +997,29 @@ export default function App() {
          </div>
       </div>
 
-      {/* Carousel UI (Only visible when a photo is active) */}
+      {/* Carousel UI - Buttons on sides and bottom center */}
       {uiActiveId !== -1 && (
-         <div className="fixed top-1/2 left-0 w-full -translate-y-1/2 flex justify-between px-4 z-50 pointer-events-none">
-            {/* Prev Button - Bottom Left on Mobile */}
+         <div className="fixed inset-0 z-50 pointer-events-none">
+            {/* Prev Button (Left Center) */}
             <button 
                onClick={handlePrev}
-               className="fixed bottom-24 left-8 w-14 h-14 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95"
+               className="fixed top-1/2 left-4 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95 z-50"
             >
                ‹
             </button>
             
-            {/* Next Button - Bottom Right on Mobile */}
+            {/* Next Button (Right Center) */}
             <button 
                onClick={handleNext}
-               className="fixed bottom-24 right-8 w-14 h-14 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95"
+               className="fixed top-1/2 right-4 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95 z-50"
             >
                ›
             </button>
 
-            {/* Close Button (Bottom Center on Mobile) */}
+            {/* Close Button (Bottom Center) */}
             <button 
                onClick={handleClose}
-               className="fixed bottom-24 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white text-sm font-bold pointer-events-auto hover:bg-white/20 transition-all shadow-lg"
+               className="fixed bottom-12 left-1/2 -translate-x-1/2 px-6 py-2 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white text-xs font-bold pointer-events-auto hover:bg-white/20 transition-all shadow-lg z-50"
             >
                CLOSE
             </button>

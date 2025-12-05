@@ -392,11 +392,9 @@ export default function App() {
 
   // Carousel Handlers
   const handleNext = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent raycasting click
+    e.stopPropagation();
     let nextId = interactionState.current.activePhotoId;
     if (nextId === -1) return;
-    // Find next valid photo (skip decos if any mixed, though currently 0-149 are photos)
-    // Simple increment loop
     nextId = (nextId + 1) % PHOTO_COUNT;
     setActivePhoto(nextId);
   };
@@ -428,7 +426,7 @@ export default function App() {
       try {
         console.log("Loading MediaPipe Vision...");
         const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
         );
         if (!isMounted) return;
         
@@ -526,7 +524,6 @@ export default function App() {
     const height = mountRef.current.clientHeight;
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 500);
     
-    // 自适应摄像机距离
     const updateCameraDistance = () => {
         const aspect = window.innerWidth / window.innerHeight;
         const targetWidth = 75; 
@@ -590,7 +587,7 @@ export default function App() {
     stars.frustumCulled = false; 
     scene.add(stars);
 
-    // 4. Photos & Decorations (Meshes)
+    // 4. Photos & Decorations
     const defaultPhotoTextures = [
       createPolaroidTexture('2025', '#ff9a9e'),
       createPolaroidTexture('HOPE', '#a18cd1'),
@@ -604,7 +601,6 @@ export default function App() {
     const objects: any[] = [];
     const meshes: THREE.Mesh[] = [];
 
-    // --- 辅助函数：设置几何体颜色 ---
     const setGeometryColor = (geometry: THREE.BufferGeometry, color: THREE.Color) => {
         const count = geometry.attributes.position.count;
         const colors = new Float32Array(count * 3);
@@ -617,8 +613,6 @@ export default function App() {
     };
 
     // --- 立体装饰几何体生成 ---
-    
-    // 1. 五角星
     const createStarGeo = () => {
       const shape = new THREE.Shape();
       const points = 5;
@@ -636,42 +630,33 @@ export default function App() {
       return geom.toNonIndexed();
     };
     
-    // 2. 礼物盒
     const createGiftGeo = () => {
         const colGoldBox = new THREE.Color('#FFD700'); 
         const colRedRibbon = new THREE.Color('#D62828'); 
-
         const boxGeo = new THREE.BoxGeometry(0.7, 0.7, 0.7).toNonIndexed();
         setGeometryColor(boxGeo, colGoldBox); 
-
         const ribbon1 = new THREE.BoxGeometry(0.75, 0.75, 0.2).toNonIndexed();
         setGeometryColor(ribbon1, colRedRibbon);
-        
         const ribbon2 = new THREE.BoxGeometry(0.2, 0.75, 0.75).toNonIndexed();
         setGeometryColor(ribbon2, colRedRibbon);
-        
         const geometries = [boxGeo, ribbon1, ribbon2];
         const merged = mergeBufferGeometries(geometries);
         merged.center();
         return merged;
     };
     
-    // 3. 雪花
     const createSnowGeo = () => {
         const barGeo = new THREE.BoxGeometry(0.08, 0.9, 0.05).toNonIndexed();
         const forkGeo = new THREE.BoxGeometry(0.3, 0.05, 0.05).toNonIndexed();
         forkGeo.translate(0, 0.25, 0); 
-        
         const axisParts = [barGeo, forkGeo];
         const axisGeo = mergeBufferGeometries(axisParts);
-
         const parts = [];
         for(let i=0; i<3; i++) {
             const g = axisGeo.clone();
             g.rotateZ((i * Math.PI) / 1.5);
             parts.push(g);
         }
-        
         const finalSnow = mergeBufferGeometries(parts);
         finalSnow.center();
         return finalSnow;
@@ -691,7 +676,13 @@ export default function App() {
         
         if (i < PHOTO_COUNT) {
           // --- 照片 ---
-          const tex = activePhotoTextures[i % activePhotoTextures.length];
+          let tex;
+          if (i < userTextures.length) {
+             tex = userTextures[i]; 
+          } else {
+             tex = defaultPhotoTextures[i % defaultPhotoTextures.length];
+          }
+
           const scaleBase = 0.6 + Math.random() * 0.3;
           geo = new THREE.PlaneGeometry(1.0 * scaleBase, 1.2 * scaleBase);
           mat = new THREE.ShaderMaterial({
@@ -700,10 +691,9 @@ export default function App() {
               transparent: true, side: THREE.DoubleSide
           });
         } else {
-          // --- 装饰 (3D Mesh) ---
+          // --- 装饰 ---
           isDeco = true;
           const decoType = i % 3; 
-          
           if (decoType === 0) { 
             geo = geoStar.clone(); 
             setGeometryColor(geo, colGold); 
@@ -770,7 +760,7 @@ export default function App() {
         });
     }
 
-    // Input Handling: Unified Touch/Mouse Logic
+    // Input Handling: Pointer Events for Unified Touch/Mouse
     const onPointerDown = (e: PointerEvent | TouchEvent) => {
         const clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
@@ -786,60 +776,22 @@ export default function App() {
         const dt = Date.now() - touchStartRef.current.time;
 
         // Detect Tap (short duration, small movement)
-        // 30px for better mobile experience
         if (dt < 300 && Math.hypot(dx, dy) < 30) {
-            handleRaycast(clientX, clientY);
-        }
-    };
-
-    // 核心优化：智能磁吸选择 (Smart Magnetism)
-    const handleRaycast = (clientX: number, clientY: number) => {
-        const mouse = new THREE.Vector2((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
-        raycaster.setFromCamera(mouse, camera);
-        const intersects = raycaster.intersectObjects(meshes);
-        
-        let targetId = -1;
-
-        // 1. 尝试直接点击
-        if (intersects.length > 0) {
-            const obj = objects.find(p => p.mesh === intersects[0].object);
-            if (obj && !obj.isDeco) {
-                targetId = obj.id;
+            // 随机选择一张照片放大 (忽略是否点中，提升手机体验)
+            // 如果已经有放大的照片，则不做动作（等待用户操作UI）或者关闭？
+            // 根据需求：“点击屏幕，随机放大一张照片”
+            if (interactionState.current.activePhotoId === -1) {
+                const randomId = Math.floor(Math.random() * PHOTO_COUNT);
+                setActivePhoto(randomId);
+            } else {
+                // 如果已经放大，点击背景也许可以关闭？
+                // 暂不处理，强制使用关闭按钮
             }
         }
-        
-        // 2. 如果没点中，启用磁吸辅助 (Mobile Friendly)
-        if (targetId === -1) {
-            let minDistance = 0.1; // 归一化距离阈值 (约等于手指触摸范围)
-            
-            objects.forEach(obj => {
-                if (obj.isDeco) return;
-                // 将物体坐标投影到屏幕空间
-                const screenPos = obj.mesh.position.clone().project(camera);
-                const dist = new THREE.Vector2(screenPos.x, screenPos.y).distanceTo(mouse);
-                
-                if (dist < minDistance) {
-                    minDistance = dist;
-                    targetId = obj.id;
-                }
-            });
-        }
-
-        // 触发 UI 更新
-        if (targetId !== -1) {
-            const newId = interactionState.current.activePhotoId === targetId ? -1 : targetId;
-            interactionState.current.activePhotoId = newId;
-            setUiActiveId(newId); // 更新 React State 以显示按钮
-        } else {
-            interactionState.current.activePhotoId = -1;
-            setUiActiveId(-1);
-        }
     };
 
-    // Use Pointer events for universal support
     window.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('pointerup', onPointerUp);
-    // Fallback for mobile Safari
     window.addEventListener('touchstart', onPointerDown, { passive: false });
     window.addEventListener('touchend', onPointerUp);
 
@@ -862,7 +814,6 @@ export default function App() {
               if (results.gestures.length > 0) {
                   const name = results.gestures[0][0].categoryName;
                   setGestureStatus(name);
-                  // 只有手势能控制聚合状态
                   if (name === 'Closed_Fist' && !isFormedRef.current) setFormed(true);
                   if (name === 'Open_Palm' && isFormedRef.current) setFormed(false);
 
@@ -903,7 +854,6 @@ export default function App() {
              (p.mesh.material as THREE.ShaderMaterial).uniforms.uTime.value = time;
              (p.mesh.material as THREE.ShaderMaterial).uniforms.uProgress.value = uProgress;
           } else {
-             // 2D 照片 (JS Animation)
              p.currentPos.lerpVectors(p.chaosPos, p.formedPos, uProgress); 
 
               let targetPos = new THREE.Vector3();
@@ -1015,18 +965,18 @@ export default function App() {
       {/* Carousel UI (Only visible when a photo is active) */}
       {uiActiveId !== -1 && (
          <div className="fixed top-1/2 left-0 w-full -translate-y-1/2 flex justify-between px-4 z-50 pointer-events-none">
-            {/* Prev Button */}
+            {/* Prev Button - Bottom Left on Mobile */}
             <button 
                onClick={handlePrev}
-               className="w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95"
+               className="fixed bottom-24 left-8 w-14 h-14 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95"
             >
                ‹
             </button>
             
-            {/* Next Button */}
+            {/* Next Button - Bottom Right on Mobile */}
             <button 
                onClick={handleNext}
-               className="w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95"
+               className="fixed bottom-24 right-8 w-14 h-14 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95"
             >
                ›
             </button>
@@ -1034,7 +984,7 @@ export default function App() {
             {/* Close Button (Top Right) */}
             <button 
                onClick={handleClose}
-               className="absolute -top-32 right-4 px-4 py-2 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white text-xs font-bold pointer-events-auto hover:bg-white/20"
+               className="fixed top-6 right-6 px-4 py-2 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white text-xs font-bold pointer-events-auto hover:bg-white/20"
             >
                CLOSE
             </button>
@@ -1042,11 +992,14 @@ export default function App() {
       )}
 
       <div className="absolute bottom-10 left-0 w-full pointer-events-none flex flex-col items-center justify-end z-10">
-        <div className="mt-4 flex flex-col items-center gap-2 text-yellow-100/60 text-sm tracking-widest font-light uppercase">
-          <p className="animate-pulse opacity-80 bg-black/20 px-4 py-1 rounded-full backdrop-blur-sm">
-            {cameraActive ? '✊ Fist: Form | 🖐 Palm: Scatter' : 'Tap Photos to View'}
-          </p>
-        </div>
+        {/* Hide instruction when photo is active */}
+        {uiActiveId === -1 && (
+          <div className="mt-4 flex flex-col items-center gap-2 text-yellow-100/60 text-sm tracking-widest font-light uppercase">
+            <p className="animate-pulse opacity-80 bg-black/20 px-4 py-1 rounded-full backdrop-blur-sm">
+              {cameraActive ? '✊ Fist: Form | 🖐 Palm: Scatter' : 'Tap Screen to View Photos'}
+            </p>
+          </div>
+        )}
       </div>
       <div className="absolute top-0 left-0 w-full h-full border-[1px] border-white/5 pointer-events-none m-4 box-border w-[calc(100%-2rem)] h-[calc(100%-2rem)] rounded-3xl z-10 mix-blend-overlay" />
     </div>

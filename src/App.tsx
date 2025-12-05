@@ -429,7 +429,7 @@ export default function App() {
       try {
         console.log("Loading MediaPipe Vision...");
         const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
         );
         if (!isMounted) return;
         
@@ -607,6 +607,7 @@ export default function App() {
     const objects: any[] = [];
     const meshes: THREE.Mesh[] = [];
 
+    // --- 辅助函数：设置几何体颜色 ---
     const setGeometryColor = (geometry: THREE.BufferGeometry, color: THREE.Color) => {
         const count = geometry.attributes.position.count;
         const colors = new Float32Array(count * 3);
@@ -768,12 +769,22 @@ export default function App() {
 
     // Input Handling: Pointer Events for Unified Touch/Mouse
     const onPointerDown = (e: PointerEvent | TouchEvent) => {
+        // 检查是否点击了UI按钮，如果是则阻止3D交互
+        if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) {
+            return;
+        }
+        
+        // 移除 cameraActiveRef 检查，允许任何时候交互
         const clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
         touchStartRef.current = { x: clientX, y: clientY, time: Date.now() };
     };
 
     const onPointerUp = (e: PointerEvent | TouchEvent) => {
+        if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) {
+            return;
+        }
+        
         const clientX = 'changedTouches' in e ? e.changedTouches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'changedTouches' in e ? e.changedTouches[0].clientY : (e as PointerEvent).clientY;
         
@@ -782,10 +793,14 @@ export default function App() {
         const dt = Date.now() - touchStartRef.current.time;
 
         // Detect Tap (short duration, small movement)
-        // 30px for better mobile experience
         if (dt < 300 && Math.hypot(dx, dy) < 30) {
             handleRaycast(clientX, clientY);
         }
+    };
+
+    const onMouseClick = (e: MouseEvent) => {
+        if ((e.target as HTMLElement).closest('button')) return;
+        // 电脑端：保持原有点击逻辑 (由 pointerUp 处理)
     };
 
     const handleRaycast = (clientX: number, clientY: number) => {
@@ -793,8 +808,9 @@ export default function App() {
         raycaster.setFromCamera(mouse, camera);
         const intersects = raycaster.intersectObjects(meshes);
         
-        // 1. Direct hit
         let targetId = -1;
+
+        // 1. Direct hit
         if (intersects.length > 0) {
             const obj = objects.find(p => p.mesh === intersects[0].object);
             if (obj && !obj.isDeco) {
@@ -802,29 +818,36 @@ export default function App() {
             }
         }
         
-        // 2. Smart Magnetism (Mobile Friendly)
-        // If direct hit failed, find closest photo within 50px radius
-        if (targetId === -1) {
-            // Mobile check
-            const isMobile = window.innerWidth < 768;
-            if (isMobile) {
-               // Randomly pick a photo (per user request for mobile experience)
-               targetId = Math.floor(Math.random() * PHOTO_COUNT);
-            }
+        // 2. Mobile Smart Magnetism (If no direct hit)
+        if (targetId === -1 && window.innerWidth < 768) {
+             let closestDist = 0.15; 
+             objects.forEach(obj => {
+                if (!obj.isDeco) {
+                    const screenPos = obj.mesh.position.clone().project(camera);
+                    const dist = new THREE.Vector2(screenPos.x, screenPos.y).distanceTo(mouse);
+                    if (dist < closestDist) {
+                        closestDist = dist;
+                        targetId = obj.id;
+                    }
+                }
+             });
+             
+             if (targetId === -1 && interactionState.current.activePhotoId === -1) {
+                 targetId = Math.floor(Math.random() * PHOTO_COUNT);
+             }
         }
 
-        // Apply selection
         if (targetId !== -1) {
              setActivePhoto(targetId);
         }
     };
 
-    // Use Pointer events for universal support
+    // Use Pointer events
     window.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('pointerup', onPointerUp);
-    // Fallback for mobile Safari
     window.addEventListener('touchstart', onPointerDown, { passive: false });
     window.addEventListener('touchend', onPointerUp);
+    window.addEventListener('click', onMouseClick);
 
     const clock = new THREE.Clock();
     let reqId: number;
@@ -842,19 +865,15 @@ export default function App() {
               lastVideoTimeRef.current = nowInMs;
               const results = gestureRecognizerRef.current.recognizeForVideo(videoRef.current, nowInMs);
               
-              let currentHoverId = -1; 
-
               if (results.gestures.length > 0) {
                   const name = results.gestures[0][0].categoryName;
                   setGestureStatus(name);
-                  // 只有手势能控制聚合状态
                   if (name === 'Closed_Fist' && !isFormedRef.current) setFormed(true);
                   if (name === 'Open_Palm' && isFormedRef.current) setFormed(false);
 
                   if (results.landmarks.length > 0) {
                       const hand = results.landmarks[0];
                       const indexTip = hand[8];
-                      
                       const handX = (1 - indexTip.x) * 2 - 1;
                       const handY = -(indexTip.y) * 2 + 1;
                       interactionState.current.handPos.set(handX, handY);
@@ -888,7 +907,6 @@ export default function App() {
              (p.mesh.material as THREE.ShaderMaterial).uniforms.uTime.value = time;
              (p.mesh.material as THREE.ShaderMaterial).uniforms.uProgress.value = uProgress;
           } else {
-             // 2D 照片 (JS Animation)
              p.currentPos.lerpVectors(p.chaosPos, p.formedPos, uProgress); 
 
               let targetPos = new THREE.Vector3();
@@ -956,6 +974,7 @@ export default function App() {
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('touchstart', onPointerDown);
       window.removeEventListener('touchend', onPointerUp);
+      window.removeEventListener('click', onMouseClick);
       
       cancelAnimationFrame(reqId);
       if(mountRef.current) mountRef.current.innerHTML = '';
@@ -984,12 +1003,17 @@ export default function App() {
       {/* Controls Container - Top Left */}
       <div className="fixed top-6 left-6 z-50 flex flex-col gap-3 items-start">
          <div className="flex gap-3">
-            <button onClick={enableCam} className={`px-5 py-2 rounded-full border border-white/20 text-xs font-bold tracking-widest uppercase transition-all backdrop-blur-md shadow-lg ${cameraActive ? 'bg-red-500/20 text-red-200 border-red-500/50' : 'bg-black/30 text-white hover:bg-white/10'} ${!modelLoaded ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            <button 
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); enableCam(); }} 
+              className={`px-5 py-2 rounded-full border border-white/20 text-xs font-bold tracking-widest uppercase transition-all backdrop-blur-md shadow-lg ${cameraActive ? 'bg-red-500/20 text-red-200 border-red-500/50' : 'bg-black/30 text-white hover:bg-white/10'} ${!modelLoaded ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
               {!modelLoaded ? 'Loading AI...' : (cameraActive ? 'Stop Camera' : 'Start Camera')}
             </button>
 
             <button 
-              onClick={() => fileInputRef.current?.click()} 
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }} 
               className="px-5 py-2 rounded-full border border-white/20 text-xs font-bold tracking-widest uppercase transition-all bg-black/30 text-white hover:bg-white/10 backdrop-blur-md shadow-lg"
             >
               Upload
@@ -997,12 +1021,13 @@ export default function App() {
          </div>
       </div>
 
-      {/* Carousel UI - Buttons on sides and bottom center */}
+      {/* Carousel UI */}
       {uiActiveId !== -1 && (
          <div className="fixed inset-0 z-50 pointer-events-none">
             {/* Prev Button (Left Center) */}
             <button 
                onClick={handlePrev}
+               onPointerDown={(e) => e.stopPropagation()}
                className="fixed top-1/2 left-4 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95 z-50"
             >
                ‹
@@ -1011,6 +1036,7 @@ export default function App() {
             {/* Next Button (Right Center) */}
             <button 
                onClick={handleNext}
+               onPointerDown={(e) => e.stopPropagation()}
                className="fixed top-1/2 right-4 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95 z-50"
             >
                ›
@@ -1019,6 +1045,7 @@ export default function App() {
             {/* Close Button (Bottom Center) */}
             <button 
                onClick={handleClose}
+               onPointerDown={(e) => e.stopPropagation()}
                className="fixed bottom-12 left-1/2 -translate-x-1/2 px-6 py-2 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white text-xs font-bold pointer-events-auto hover:bg-white/20 transition-all shadow-lg z-50"
             >
                CLOSE

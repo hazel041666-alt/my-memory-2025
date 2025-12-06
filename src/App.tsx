@@ -9,6 +9,7 @@ import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision';
 // 模拟拍立得纹理生成器 (高清版)
 const createPolaroidTexture = (content: string | HTMLImageElement, color: string) => {
   const canvas = document.createElement('canvas');
+  // 提升分辨率至 1024x1200 以保证放大后的清晰度
   canvas.width = 1024;
   canvas.height = 1200; 
   const ctx = canvas.getContext('2d');
@@ -769,12 +770,10 @@ export default function App() {
 
     // Input Handling: Pointer Events for Unified Touch/Mouse
     const onPointerDown = (e: PointerEvent | TouchEvent) => {
-        // 检查是否点击了UI按钮，如果是则阻止3D交互
         if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) {
             return;
         }
         
-        // 移除 cameraActiveRef 检查，允许任何时候交互
         const clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
         touchStartRef.current = { x: clientX, y: clientY, time: Date.now() };
@@ -792,7 +791,6 @@ export default function App() {
         const dy = clientY - touchStartRef.current.y;
         const dt = Date.now() - touchStartRef.current.time;
 
-        // Detect Tap (short duration, small movement)
         if (dt < 300 && Math.hypot(dx, dy) < 30) {
             handleRaycast(clientX, clientY);
         }
@@ -800,7 +798,7 @@ export default function App() {
 
     const onMouseClick = (e: MouseEvent) => {
         if ((e.target as HTMLElement).closest('button')) return;
-        // 电脑端：保持原有点击逻辑 (由 pointerUp 处理)
+        handleRaycast(e.clientX, e.clientY);
     };
 
     const handleRaycast = (clientX: number, clientY: number) => {
@@ -842,7 +840,7 @@ export default function App() {
         }
     };
 
-    // Use Pointer events
+    // Use Pointer events for universal support
     window.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('touchstart', onPointerDown, { passive: false });
@@ -1058,11 +1056,22 @@ export default function App() {
         {uiActiveId === -1 && (
           <div className="mt-4 flex flex-col items-center gap-2 text-yellow-100/60 text-sm tracking-widest font-light uppercase">
             <p className="animate-pulse opacity-80 bg-black/20 px-4 py-1 rounded-full backdrop-blur-sm">
-              {cameraActive ? '✊ Fist: Form | 🖐 Palm: Scatter' : 'Tap Screen to View Photos'}
+              {cameraActive ? '✊ Fist: Form | 🖐 Palm: Scatter' : 'Tap Photos to View'}
             </p>
           </div>
         )}
       </div>
+      
+      {/* Camera View - Bottom Left */}
+      <video 
+         ref={videoRef} 
+         className={`fixed bottom-4 left-4 w-32 h-24 object-cover rounded-lg border border-white/20 shadow-lg z-20 transition-opacity duration-300 pointer-events-none ${cameraActive ? 'opacity-100' : 'opacity-0'}`} 
+         autoPlay 
+         playsInline 
+         muted 
+         style={{ transform: 'scaleX(-1)' }}
+      ></video>
+
       <div className="absolute top-0 left-0 w-full h-full border-[1px] border-white/5 pointer-events-none m-4 box-border w-[calc(100%-2rem)] h-[calc(100%-2rem)] rounded-3xl z-10 mix-blend-overlay" />
     </div>
   );

@@ -6,31 +6,35 @@ import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision';
 // 1. 资源生成与工具函数
 // -----------------------------------------------------------------------------
 
-// 模拟拍立得纹理生成器 (性能优化版)
-const createPolaroidTexture = (content: string | HTMLImageElement, color: string, monthLabel?: string) => {
+// 模拟拍立得纹理生成器 (高清版)
+const createPolaroidTexture = (content: string | HTMLImageElement, color: string) => {
   const canvas = document.createElement('canvas');
-  // 512x600 在移动端依然非常清晰，且性能更好
-  canvas.width = 512;
-  canvas.height = 600; 
+  // 提升分辨率至 1024x1200 以保证放大后的清晰度
+  canvas.width = 1024;
+  canvas.height = 1200; 
   const ctx = canvas.getContext('2d');
   if (!ctx) return new THREE.Texture();
 
   ctx.fillStyle = '#fdfdfd';
-  ctx.fillRect(0, 0, 512, 600);
+  ctx.fillRect(0, 0, 1024, 1200);
   
   ctx.shadowColor = "rgba(0,0,0,0.15)";
-  ctx.shadowBlur = 30; 
+  ctx.shadowBlur = 60; 
   
   ctx.fillStyle = color;
-  ctx.fillRect(40, 40, 432, 432); 
+  ctx.fillRect(80, 80, 864, 864); 
   ctx.shadowBlur = 0;
 
   if (typeof content === 'string') {
-    ctx.font = 'bold 80px "Impact", sans-serif'; 
+    ctx.font = 'bold 160px "Impact", sans-serif'; 
     ctx.fillStyle = '#333';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(content, 256, 256); 
+    ctx.fillText(content, 512, 512); 
+    
+    ctx.font = '80px "Courier New", monospace';
+    ctx.fillStyle = '#666';
+    ctx.fillText("2025", 512, 1080);
   } else {
     const aspect = content.width / content.height;
     let sw = content.width;
@@ -46,31 +50,17 @@ const createPolaroidTexture = (content: string | HTMLImageElement, color: string
     }
     ctx.shadowColor = "transparent";
     ctx.shadowBlur = 0;
-    ctx.drawImage(content, sx, sy, sw, sh, 40, 40, 432, 432);
+    ctx.drawImage(content, sx, sy, sw, sh, 80, 80, 864, 864);
+    
+    ctx.font = '64px "Courier New", monospace';
+    ctx.fillStyle = '#444';
+    ctx.fillText("My Memory", 512, 1080);
   }
-
-  // 底部文字
-  ctx.font = 'bold 40px "Courier New", monospace';
-  ctx.fillStyle = '#444';
-  ctx.textAlign = 'center';
-  ctx.fillText(monthLabel || "2025 Memory", 256, 540);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.minFilter = THREE.LinearMipMapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
-  texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
-};
-
-// 手指计数辅助函数
-const countExtendedFingers = (landmarks: any[]) => {
-    let count = 0;
-    if (landmarks[8].y < landmarks[6].y) count++;
-    if (landmarks[12].y < landmarks[10].y) count++;
-    if (landmarks[16].y < landmarks[14].y) count++;
-    if (landmarks[20].y < landmarks[18].y) count++;
-    if (landmarks[4].y < landmarks[2].y) count++;
-    return count;
 };
 
 // 简单的几何体合并工具函数
@@ -136,8 +126,7 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, width, height);
   
-  // 使用 Arial Black，笔画极粗
-  ctx.font = '900 320px "Arial Black", "Impact", sans-serif';
+  ctx.font = 'bold 320px "Verdana", "Arial", sans-serif';
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -370,10 +359,6 @@ export default function App() {
   // UI State for Carousel Navigation
   const [uiActiveId, setUiActiveId] = useState<number>(-1);
 
-  // New State for Month Film Mode
-  const [activeMonth, setActiveMonth] = useState<number | null>(null);
-  const activeMonthRef = useRef<number | null>(null);
-
   // Camera & Gesture
   const videoRef = useRef<HTMLVideoElement>(null);
   const [cameraActive, setCameraActive] = useState(false);
@@ -384,27 +369,24 @@ export default function App() {
   const gestureRecognizerRef = useRef<GestureRecognizer | null>(null);
   const lastVideoTimeRef = useRef(-1);
   
-  // Photos State: 存储 Texture 和 Month
-  const [userTextures, setUserTextures] = useState<{tex: THREE.Texture, month: number}[]>([]);
+  // Photos State
+  const [userTextures, setUserTextures] = useState<THREE.Texture[]>([]);
   const [sceneReady, setSceneReady] = useState(false);
 
   // Interaction State
   const interactionState = useRef({
+    isPinching: false,
     handPos: new THREE.Vector2(0, 0),
     activePhotoId: -1,
-    isPinching: false
+    grabbedPhotoId: -1,
+    lastPinchStatus: false,
+    pinchStartTime: 0,
+    lastTapTime: 0,
+    hoveredPhotoId: -1
   });
-
-  // Cooldown / Debounce State for Gestures
-  const lastStateChangeTime = useRef(0);
 
   // Tap Detection Ref
   const touchStartRef = useRef({ x: 0, y: 0, time: 0 });
-
-  // Sync Refs
-  useEffect(() => { isFormedRef.current = isFormed; }, [isFormed]);
-  useEffect(() => { cameraActiveRef.current = cameraActive; }, [cameraActive]);
-  useEffect(() => { activeMonthRef.current = activeMonth; }, [activeMonth]);
 
   // Helper to update active photo safely and sync UI
   const setActivePhoto = (id: number) => {
@@ -434,41 +416,56 @@ export default function App() {
     setActivePhoto(-1);
   };
 
-  // 胶卷模式改变时，重置状态
+  useEffect(() => { 
+    isFormedRef.current = isFormed; 
+  }, [isFormed]);
+
   useEffect(() => {
-    if (activeMonth !== null) {
-      setFormed(false); // 强制散开
-      setActivePhoto(-1);
-    }
-  }, [activeMonth]);
+    cameraActiveRef.current = cameraActive;
+  }, [cameraActive]);
 
   useEffect(() => {
     let isMounted = true;
     const loadModel = async () => {
       try {
-        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
+        console.log("Loading MediaPipe Vision...");
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+        );
         if (!isMounted) return;
+        
         const recognizer = await GestureRecognizer.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task", delegate: "GPU" },
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task",
+            delegate: "GPU"
+          },
           runningMode: "VIDEO",
-          numHands: 2 // 开启双手识别
+          numHands: 1
         });
+        
         if (isMounted) {
           gestureRecognizerRef.current = recognizer;
           setModelLoaded(true);
+          console.log("MediaPipe Model Loaded");
         }
-      } catch(e) { console.error(e); if (isMounted) setModelLoaded(false); }
+      } catch(e) { 
+        console.error("MediaPipe Load Error:", e);
+        if (isMounted) setModelLoaded(false);
+      }
     };
     loadModel();
     return () => { isMounted = false; };
   }, []);
 
   const enableCam = async () => {
-    if (!gestureRecognizerRef.current) { if (!modelLoaded) alert("AI Model Loading..."); return; }
+    if (!gestureRecognizerRef.current) { 
+        if (!modelLoaded) alert("AI Model is still loading... Please wait.");
+        return; 
+    }
+    
     if (cameraActive) {
       setCameraActive(false);
       setFormed(false);
-      setActiveMonth(null);
       if (videoRef.current?.srcObject) {
         (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
         videoRef.current.srcObject = null;
@@ -478,36 +475,37 @@ export default function App() {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          videoRef.current.addEventListener('loadeddata', () => { if (videoRef.current) videoRef.current.play().catch(()=>{}); setCameraActive(true); });
+          videoRef.current.addEventListener('loadeddata', () => {
+             if (videoRef.current) videoRef.current.play(); 
+             setCameraActive(true);
+          });
         }
-      } catch(e) { alert("Unable to access camera."); }
+      } catch(e) { 
+        console.error(e);
+        alert("Unable to access camera. Please allow permissions."); 
+      }
     }
   };
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const files = Array.from(e.target.files);
-      const newItems: {tex: THREE.Texture, month: number}[] = [];
+      const newTextures: THREE.Texture[] = [];
       let loadedCount = 0;
 
       files.forEach(file => {
         const reader = new FileReader();
-        // 自动识别月份 (1-12)
-        const date = new Date(file.lastModified);
-        const month = date.getMonth() + 1;
-        const monthStr = `${date.getFullYear()}.${month}`;
-
         reader.onload = (ev) => {
           const img = new Image();
           img.onload = () => {
             const colors = ['#ff9a9e', '#a18cd1', '#fad0c4', '#fbc2eb', '#a6c1ee'];
             const randomColor = colors[Math.floor(Math.random() * colors.length)];
-            const tex = createPolaroidTexture(img, randomColor, monthStr);
-            newItems.push({ tex, month });
+            const tex = createPolaroidTexture(img, randomColor);
+            newTextures.push(tex);
             loadedCount++;
             
             if (loadedCount === files.length) {
-              setUserTextures(prev => [...prev, ...newItems]); 
+              setUserTextures(prev => [...prev, ...newTextures]); 
               setSceneReady(prev => !prev); 
             }
           };
@@ -610,6 +608,7 @@ export default function App() {
     const objects: any[] = [];
     const meshes: THREE.Mesh[] = [];
 
+    // --- 辅助函数：设置几何体颜色 ---
     const setGeometryColor = (geometry: THREE.BufferGeometry, color: THREE.Color) => {
         const count = geometry.attributes.position.count;
         const colors = new Float32Array(count * 3);
@@ -621,34 +620,108 @@ export default function App() {
         geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     };
 
-    const createStarGeo = () => { const s=new THREE.Shape();const p=5;for(let i=0;i<p*2;i++){const l=i%2===0?0.6:0.25;const a=(i/(p*2))*Math.PI*2-Math.PI/2;const x=Math.cos(a)*l;const y=Math.sin(a)*l;if(i===0)s.moveTo(x,y);else s.lineTo(x,y);}s.closePath();const g=new THREE.ExtrudeGeometry(s,{depth:0.15,bevelEnabled:true,bevelThickness:0.05,bevelSize:0.05,bevelSegments:2});g.center();return g.toNonIndexed(); };
-    const createGiftGeo = () => { const cb=new THREE.Color('#FFD700');const cr=new THREE.Color('#D62828');const b=new THREE.BoxGeometry(0.7,0.7,0.7).toNonIndexed();setGeometryColor(b,cb);const r1=new THREE.BoxGeometry(0.75,0.75,0.2).toNonIndexed();setGeometryColor(r1,cr);const r2=new THREE.BoxGeometry(0.2,0.75,0.75).toNonIndexed();setGeometryColor(r2,cr);const gs=[b,r1,r2];const m=mergeBufferGeometries(gs);m.center();return m; };
-    const createSnowGeo = () => { const b=new THREE.BoxGeometry(0.08,0.9,0.05).toNonIndexed();const f=new THREE.BoxGeometry(0.3,0.05,0.05).toNonIndexed();f.translate(0,0.25,0);const ax=mergeBufferGeometries([b,f]);const ps=[];for(let i=0;i<3;i++){const g=ax.clone();g.rotateZ((i*Math.PI)/1.5);ps.push(g);}const m=mergeBufferGeometries(ps);m.center();return m; };
-    const geoStar=createStarGeo(); const geoGift=createGiftGeo(); const geoSnow=createSnowGeo();
-    const colGold=new THREE.Color('#FFD700'); const colSilver=new THREE.Color('#C0C0C0'); 
+    // --- 立体装饰几何体生成 ---
+    const createStarGeo = () => {
+      const shape = new THREE.Shape();
+      const points = 5;
+      for (let i = 0; i < points * 2; i++) {
+        const l = i % 2 === 0 ? 0.6 : 0.25;
+        const a = (i / (points * 2)) * Math.PI * 2 - Math.PI/2;
+        const x = Math.cos(a) * l;
+        const y = Math.sin(a) * l;
+        if (i === 0) shape.moveTo(x, y);
+        else shape.lineTo(x, y);
+      }
+      shape.closePath();
+      const geom = new THREE.ExtrudeGeometry(shape, { depth: 0.15, bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.05, bevelSegments: 2 });
+      geom.center();
+      return geom.toNonIndexed();
+    };
+    
+    const createGiftGeo = () => {
+        const colGoldBox = new THREE.Color('#FFD700'); 
+        const colRedRibbon = new THREE.Color('#D62828'); 
+        const boxGeo = new THREE.BoxGeometry(0.7, 0.7, 0.7).toNonIndexed();
+        setGeometryColor(boxGeo, colGoldBox); 
+        const ribbon1 = new THREE.BoxGeometry(0.75, 0.75, 0.2).toNonIndexed();
+        setGeometryColor(ribbon1, colRedRibbon);
+        const ribbon2 = new THREE.BoxGeometry(0.2, 0.75, 0.75).toNonIndexed();
+        setGeometryColor(ribbon2, colRedRibbon);
+        const geometries = [boxGeo, ribbon1, ribbon2];
+        const merged = mergeBufferGeometries(geometries);
+        merged.center();
+        return merged;
+    };
+    
+    const createSnowGeo = () => {
+        const barGeo = new THREE.BoxGeometry(0.08, 0.9, 0.05).toNonIndexed();
+        const forkGeo = new THREE.BoxGeometry(0.3, 0.05, 0.05).toNonIndexed();
+        forkGeo.translate(0, 0.25, 0); 
+        const axisParts = [barGeo, forkGeo];
+        const axisGeo = mergeBufferGeometries(axisParts);
+        const parts = [];
+        for(let i=0; i<3; i++) {
+            const g = axisGeo.clone();
+            g.rotateZ((i * Math.PI) / 1.5);
+            parts.push(g);
+        }
+        const finalSnow = mergeBufferGeometries(parts);
+        finalSnow.center();
+        return finalSnow;
+    };
+
+    const geoStar = createStarGeo();
+    const geoGift = createGiftGeo();
+    const geoSnow = createSnowGeo();
+    
+    const colGold = new THREE.Color('#FFD700'); 
+    const colSilver = new THREE.Color('#C0C0C0'); 
 
     for(let i=0; i<TOTAL_ITEMS; i++) {
-        let isDeco = false; let mat; let geo; let photoMonth = 0;
+        let isDeco = false;
+        let mat;
+        let geo;
         
         if (i < PHOTO_COUNT) {
+          // --- 照片 ---
           let tex;
           if (i < userTextures.length) {
-             tex = userTextures[i].tex;
-             photoMonth = userTextures[i].month;
+             tex = userTextures[i]; 
           } else {
              tex = defaultPhotoTextures[i % defaultPhotoTextures.length];
-             photoMonth = (i % 12) + 1; 
           }
+
           const scaleBase = 0.6 + Math.random() * 0.3;
           geo = new THREE.PlaneGeometry(1.0 * scaleBase, 1.2 * scaleBase);
-          mat = new THREE.ShaderMaterial({ vertexShader: photoVertexShader, fragmentShader: photoFragmentShader, uniforms: { uTexture: { value: tex }, uOpacity: { value: 1.0 } }, transparent: true, side: THREE.DoubleSide });
+          mat = new THREE.ShaderMaterial({
+              vertexShader: photoVertexShader, fragmentShader: photoFragmentShader,
+              uniforms: { uTexture: { value: tex }, uOpacity: { value: 1.0 } },
+              transparent: true, side: THREE.DoubleSide
+          });
         } else {
+          // --- 装饰 ---
           isDeco = true;
           const decoType = i % 3; 
-          if (decoType === 0) { geo = geoStar.clone(); setGeometryColor(geo, colGold); }
-          else if (decoType === 1) { geo = geoGift.clone(); }
-          else { geo = geoSnow.clone(); setGeometryColor(geo, colSilver); }
-          mat = new THREE.ShaderMaterial({ vertexShader: decoVertexShader, fragmentShader: decoFragmentShader, uniforms: { uTime: { value: 0 }, uProgress: { value: 0 } } });
+          if (decoType === 0) { 
+            geo = geoStar.clone(); 
+            setGeometryColor(geo, colGold); 
+          }
+          else if (decoType === 1) { 
+            geo = geoGift.clone(); 
+          }
+          else { 
+            geo = geoSnow.clone(); 
+            setGeometryColor(geo, colSilver); 
+          }
+
+          mat = new THREE.ShaderMaterial({
+            vertexShader: decoVertexShader,
+            fragmentShader: decoFragmentShader,
+            uniforms: {
+              uTime: { value: 0 },
+              uProgress: { value: 0 },
+            },
+          });
         }
 
         const mesh = new THREE.Mesh(geo, mat);
@@ -656,20 +729,30 @@ export default function App() {
         meshes.push(mesh);
 
         const r = 40 * Math.cbrt(Math.random());
-        const theta = Math.random() * Math.PI * 2; const phi = Math.acos(2 * Math.random() - 1);
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
         const chaosPos = new THREE.Vector3(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi));
+        
         const formedBase = textTargetPositions[i % textTargetPositions.length];
-        const formedPos = new THREE.Vector3(formedBase.x, formedBase.y, formedBase.z + (Math.random()-0.5) * (isDeco ? 3.0 : 1.0));
+        const formedPos = new THREE.Vector3(
+          formedBase.x, 
+          formedBase.y, 
+          formedBase.z + (Math.random()-0.5) * (isDeco ? 3.0 : 1.0) 
+        );
 
-        // Inject attributes for decos
         if (isDeco) {
            const count = mesh.geometry.attributes.position.count;
-           const aPosChaos = new Float32Array(count*3); const aPosFormed = new Float32Array(count*3); const aRandomVec = new Float32Array(count*3); const aRandom = new Float32Array(count);
-           const rv = [Math.random()-0.5, Math.random()-0.5, Math.random()-0.5]; const rVal = Math.random();
+           const aPosChaos = new Float32Array(count * 3);
+           const aPosFormed = new Float32Array(count * 3);
+           const aRandomVec = new Float32Array(count * 3);
+           const aRandom = new Float32Array(count);
+           const rv = [Math.random()-0.5, Math.random()-0.5, Math.random()-0.5];
+           const rVal = Math.random();
            for(let v=0; v<count; v++) {
               aPosChaos[v*3]=chaosPos.x; aPosChaos[v*3+1]=chaosPos.y; aPosChaos[v*3+2]=chaosPos.z;
               aPosFormed[v*3]=formedPos.x; aPosFormed[v*3+1]=formedPos.y; aPosFormed[v*3+2]=formedPos.z;
-              aRandomVec[v*3]=rv[0]; aRandomVec[v*3+1]=rv[1]; aRandomVec[v*3+2]=rv[2]; aRandom[v]=rVal;
+              aRandomVec[v*3]=rv[0]; aRandomVec[v*3+1]=rv[1]; aRandomVec[v*3+2]=rv[2];
+              aRandom[v]=rVal;
            }
            mesh.geometry.setAttribute('aPosChaos', new THREE.BufferAttribute(aPosChaos, 3));
            mesh.geometry.setAttribute('aPosFormed', new THREE.BufferAttribute(aPosFormed, 3));
@@ -681,8 +764,7 @@ export default function App() {
             id: i, mesh: mesh, chaosPos: chaosPos, formedPos: formedPos, currentPos: chaosPos.clone(),
             randomRot: new THREE.Euler((Math.random()-0.5)*1.0, (Math.random()-0.5)*1.0, (Math.random()-0.5)*0.5), 
             floatOffset: Math.random() * 100,
-            isDeco: isDeco,
-            month: photoMonth
+            isDeco: isDeco 
         });
     }
 
@@ -709,7 +791,6 @@ export default function App() {
         const dy = clientY - touchStartRef.current.y;
         const dt = Date.now() - touchStartRef.current.time;
 
-        // Detect Tap (short duration, small movement)
         if (dt < 300 && Math.hypot(dx, dy) < 30) {
             handleRaycast(clientX, clientY);
         }
@@ -721,9 +802,6 @@ export default function App() {
     };
 
     const handleRaycast = (clientX: number, clientY: number) => {
-        // If in film mode, tapping background shouldn't do random zoom. 
-        if (activeMonthRef.current !== null) return;
-
         const mouse = new THREE.Vector2((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
         raycaster.setFromCamera(mouse, camera);
         const intersects = raycaster.intersectObjects(meshes);
@@ -771,7 +849,6 @@ export default function App() {
 
     const clock = new THREE.Clock();
     let reqId: number;
-    let currentFilmIndex = 0;
 
     const animate = () => {
       reqId = requestAnimationFrame(animate);
@@ -789,50 +866,9 @@ export default function App() {
               if (results.gestures.length > 0) {
                   const name = results.gestures[0][0].categoryName;
                   setGestureStatus(name);
+                  if (name === 'Closed_Fist' && !isFormedRef.current) setFormed(true);
+                  if (name === 'Open_Palm' && isFormedRef.current) setFormed(false);
 
-                  // 1. Priority: Chaos -> Film (Month Selection)
-                  if (!isFormedRef.current) {
-                      if (results.landmarks.length > 0) {
-                          const count1 = countExtendedFingers(results.landmarks[0]);
-                          let totalCount = count1;
-                          if (results.landmarks.length > 1) totalCount += countExtendedFingers(results.landmarks[1]);
-                          
-                          // Special logic
-                          if (results.landmarks.length > 1) {
-                             const c1 = countExtendedFingers(results.landmarks[0]);
-                             const c2 = countExtendedFingers(results.landmarks[1]);
-                             if ((c1===1 && c2===1)) totalCount = 11;
-                             if ((c1===1 && c2===2) || (c1===2 && c2===1)) totalCount = 12;
-                          }
-
-                          if (Date.now() - lastStateChangeTime.current > 2000) {
-                             if (totalCount >= 1 && totalCount <= 12) {
-                                 if (activeMonthRef.current !== totalCount) {
-                                     setActiveMonth(totalCount);
-                                     setGestureStatus(`Month: ${totalCount}`);
-                                 }
-                             }
-                          }
-                      }
-                  }
-
-                  // 2. Priority: Closed Fist -> Form 2025 (Reset Month)
-                  if (name === 'Closed_Fist') {
-                    if (!isFormedRef.current || activeMonthRef.current !== null) { 
-                        setFormed(true); 
-                        setActiveMonth(null); 
-                        lastStateChangeTime.current = Date.now();
-                    }
-                  } 
-                  // 3. Priority: Open Palm -> Scatter (Only if formed)
-                  else if (name === 'Open_Palm') {
-                    if (isFormedRef.current) {
-                        setFormed(false);
-                        lastStateChangeTime.current = Date.now(); 
-                    }
-                  }
-
-                  // Hand Tracking for Parallax
                   if (results.landmarks.length > 0) {
                       const hand = results.landmarks[0];
                       const indexTip = hand[8];
@@ -853,27 +889,14 @@ export default function App() {
           starMat.uniforms.uProgress.value = THREE.MathUtils.lerp(starMat.uniforms.uProgress.value, targetP, 1 - Math.exp(-3.0 * delta));
       }
 
-      const uProgress = starMat.uniforms.uProgress.value;
-      const isFilmMode = activeMonthRef.current !== null;
-
-      // Camera Animation
-      // 定义 targetCamZ，确保无论是否胶卷模式，变量都存在
-      let targetCamX = (camActive ? 0 : mouseRef.current.x * 3.0);
-      let targetCamY = (camActive ? 0 : mouseRef.current.y * 3.0);
-      let targetCamZ = isFilmMode ? 15 : (window.innerWidth < 768 ? 50 : 35); // Film模式拉近，手机端稍微拉远
-
-      camera.position.x += (targetCamX - camera.position.x) * 0.05;
-      camera.position.y += (targetCamY - camera.position.y) * 0.05;
-      camera.position.z += (targetCamZ - camera.position.z) * 0.05;
+      // Update Camera
+      const targetX = (camActive ? interactionState.current.handPos.x : mouseRef.current.x) * 3.0;
+      const targetY = (camActive ? interactionState.current.handPos.y : mouseRef.current.y) * 3.0;
+      camera.position.x += (targetX - camera.position.x) * 0.05;
+      camera.position.y += (targetY - camera.position.y) * 0.05;
       camera.lookAt(0, 0, 0);
 
-      // Layout Logic
-      let filmX = 0;
-      if (isFilmMode) {
-          const monthPhotos = objects.filter(o => o.month === activeMonthRef.current && !o.isDeco);
-          filmX = -((monthPhotos.length - 1) * 1.5) / 2;
-      }
-      currentFilmIndex = 0;
+      const uProgress = starMat.uniforms.uProgress.value;
 
       objects.forEach(p => {
           const isActive = interactionState.current.activePhotoId === p.id;
@@ -881,62 +904,40 @@ export default function App() {
           if (p.isDeco) {
              (p.mesh.material as THREE.ShaderMaterial).uniforms.uTime.value = time;
              (p.mesh.material as THREE.ShaderMaterial).uniforms.uProgress.value = uProgress;
-             p.mesh.visible = !isFilmMode; 
           } else {
-             // Photo
-             let targetPos = new THREE.Vector3();
-             let targetRot = new THREE.Euler();
-             let targetScale = 1.0;
+             p.currentPos.lerpVectors(p.chaosPos, p.formedPos, uProgress); 
 
-             if (isActive) {
-                 // Zoomed
-                 const camDir = new THREE.Vector3(); camera.getWorldDirection(camDir);
-                 targetPos.copy(camera.position).add(camDir.multiplyScalar(6)); 
-                 targetRot.set(camera.rotation.x, camera.rotation.y, camera.rotation.z);
-                 targetScale = 3.0; 
-                 p.mesh.visible = true;
-             } else if (isFilmMode) {
-                 // Film Strip
-                 if (p.month === activeMonthRef.current) {
-                     const spacing = 1.5;
-                     const xOffset = currentFilmIndex * spacing + filmX;
-                     
-                     // Scroll
-                     const scroll = Math.sin(time * 0.5) * Math.max(0, 5); 
-                     
-                     targetPos.set(xOffset + scroll, 0, 2); 
-                     targetRot.set(0, 0, 0); 
-                     targetScale = 1.2;
-                     p.mesh.visible = true;
-                     currentFilmIndex++;
-                 } else {
-                     targetPos.copy(p.currentPos).add(new THREE.Vector3(0, -50, 0)); 
-                     p.mesh.visible = false;
-                 }
-             } else {
-                 // Normal
-                 p.mesh.visible = true;
-                 p.currentPos.lerpVectors(p.chaosPos, p.formedPos, uProgress); 
-                 const floatX = Math.sin(time * 0.5 + p.floatOffset) * 0.2; 
-                 const floatY = Math.cos(time * 0.3 + p.floatOffset) * 0.2;
-                 targetPos.copy(p.currentPos).add(new THREE.Vector3(floatX, floatY, 0));
-                 
-                 if (isFormedRef.current) {
-                     const speed = 0.05;
-                     targetRot.set(Math.sin(time*speed+p.id)*0.1, Math.cos(time*speed*0.5+p.id)*0.1, 0);
-                 } else {
-                     targetRot.copy(p.randomRot);
-                     targetRot.x += Math.sin(time * 0.1) * 0.2;
-                 }
-             }
+              let targetPos = new THREE.Vector3();
+              let targetRot = new THREE.Euler();
+              let targetScale = 1.0;
 
-             const speed = (isActive || isFilmMode) ? 0.1 : 0.05; 
-             p.mesh.position.lerp(targetPos, speed);
-             p.mesh.rotation.x += (targetRot.x - p.mesh.rotation.x) * speed;
-             p.mesh.rotation.y += (targetRot.y - p.mesh.rotation.y) * speed;
-             p.mesh.rotation.z += (targetRot.z - p.mesh.rotation.z) * speed;
-             p.mesh.scale.setScalar(THREE.MathUtils.lerp(p.mesh.scale.x, targetScale, speed));
-             p.mesh.renderOrder = isActive ? 999 : (isFilmMode ? 100 : 0); 
+              if (isActive) {
+                  const camDir = new THREE.Vector3();
+                  camera.getWorldDirection(camDir);
+                  targetPos.copy(camera.position).add(camDir.multiplyScalar(6)); 
+                  targetRot.set(camera.rotation.x, camera.rotation.y, camera.rotation.z);
+                  targetScale = 3.0; 
+              } else {
+                  const floatX = Math.sin(time * 0.5 + p.floatOffset) * 0.2; 
+                  const floatY = Math.cos(time * 0.3 + p.floatOffset) * 0.2;
+                  targetPos.copy(p.currentPos).add(new THREE.Vector3(floatX, floatY, 0));
+                  
+                  if (isFormedRef.current) {
+                      const speed = 0.05;
+                      targetRot.set(Math.sin(time*speed+p.id)*0.1, Math.cos(time*speed*0.5+p.id)*0.1, 0);
+                  } else {
+                      targetRot.copy(p.randomRot);
+                      targetRot.x += Math.sin(time * 0.1) * 0.2;
+                  }
+              }
+
+              const speed = isActive ? 0.15 : 0.05; 
+              p.mesh.position.lerp(targetPos, speed);
+              p.mesh.rotation.x += (targetRot.x - p.mesh.rotation.x) * speed;
+              p.mesh.rotation.y += (targetRot.y - p.mesh.rotation.y) * speed;
+              p.mesh.rotation.z += (targetRot.z - p.mesh.rotation.z) * speed;
+              p.mesh.scale.setScalar(THREE.MathUtils.lerp(p.mesh.scale.x, targetScale, speed));
+              p.mesh.renderOrder = isActive ? 999 : (p.isDeco ? 1 : 0); 
           }
       });
 
@@ -972,6 +973,7 @@ export default function App() {
       window.removeEventListener('touchstart', onPointerDown);
       window.removeEventListener('touchend', onPointerUp);
       window.removeEventListener('click', onMouseClick);
+      
       cancelAnimationFrame(reqId);
       if(mountRef.current) mountRef.current.innerHTML = '';
       starGeo.dispose();
@@ -984,41 +986,93 @@ export default function App() {
   return (
     <div className="relative w-full h-screen bg-slate-900 overflow-hidden select-none font-sans">
       <div ref={mountRef} className="w-full h-full block" style={{ background: '#020408' }} />
-      <video ref={videoRef} className="fixed bottom-4 left-4 w-32 h-24 object-cover rounded-lg border border-white/20 shadow-lg z-20 transition-opacity duration-300 pointer-events-none" style={{ opacity: cameraActive ? 1 : 0, transform: 'scaleX(-1)' }} autoPlay playsInline muted></video>
-      <input type="file" multiple accept="image/*" ref={fileInputRef} className="hidden" onChange={handleUpload} />
+      <video ref={videoRef} className="absolute top-0 left-0 w-64 h-48 opacity-0 pointer-events-none" autoPlay playsInline muted></video>
+      
+      {/* Hidden File Input */}
+      <input 
+        type="file" 
+        multiple 
+        accept="image/*" 
+        ref={fileInputRef}
+        className="hidden" 
+        onChange={handleUpload}
+      />
 
+      {/* Controls Container - Top Left */}
       <div className="fixed top-6 left-6 z-50 flex flex-col gap-3 items-start">
          <div className="flex gap-3">
-            <button onClick={enableCam} className={`px-5 py-2 rounded-full border border-white/20 text-xs font-bold tracking-widest uppercase transition-all backdrop-blur-md shadow-lg ${cameraActive ? 'bg-red-500/20 text-red-200 border-red-500/50' : 'bg-black/30 text-white hover:bg-white/10'} ${!modelLoaded ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            <button 
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); enableCam(); }} 
+              className={`px-5 py-2 rounded-full border border-white/20 text-xs font-bold tracking-widest uppercase transition-all backdrop-blur-md shadow-lg ${cameraActive ? 'bg-red-500/20 text-red-200 border-red-500/50' : 'bg-black/30 text-white hover:bg-white/10'} ${!modelLoaded ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
               {!modelLoaded ? 'Loading AI...' : (cameraActive ? 'Stop Camera' : 'Start Camera')}
             </button>
-            <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }} className="px-5 py-2 rounded-full border border-white/20 text-xs font-bold tracking-widest uppercase transition-all bg-black/30 text-white hover:bg-white/10 backdrop-blur-md shadow-lg">Upload</button>
+
+            <button 
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }} 
+              className="px-5 py-2 rounded-full border border-white/20 text-xs font-bold tracking-widest uppercase transition-all bg-black/30 text-white hover:bg-white/10 backdrop-blur-md shadow-lg"
+            >
+              Upload
+            </button>
          </div>
       </div>
 
-      {activeMonth !== null && (
-          <div className="fixed top-24 left-1/2 -translate-x-1/2 z-40 bg-black/50 backdrop-blur px-6 py-2 rounded-full border border-white/20 text-white font-bold tracking-widest animate-fade-in-down">
-              {activeMonth}月 MEMORIES
-          </div>
-      )}
-
+      {/* Carousel UI */}
       {uiActiveId !== -1 && (
          <div className="fixed inset-0 z-50 pointer-events-none">
-            <button onClick={handlePrev} onPointerDown={(e) => e.stopPropagation()} className="fixed top-1/2 left-4 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95 z-50">‹</button>
-            <button onClick={handleNext} onPointerDown={(e) => e.stopPropagation()} className="fixed top-1/2 right-4 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95 z-50">›</button>
-            <button onClick={handleClose} onPointerDown={(e) => e.stopPropagation()} className="fixed bottom-12 left-1/2 -translate-x-1/2 px-6 py-2 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white text-xs font-bold pointer-events-auto hover:bg-white/20 transition-all shadow-lg z-50">CLOSE</button>
+            {/* Prev Button (Left Center) */}
+            <button 
+               onClick={handlePrev}
+               onPointerDown={(e) => e.stopPropagation()}
+               className="fixed top-1/2 left-4 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95 z-50"
+            >
+               ‹
+            </button>
+            
+            {/* Next Button (Right Center) */}
+            <button 
+               onClick={handleNext}
+               onPointerDown={(e) => e.stopPropagation()}
+               className="fixed top-1/2 right-4 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95 z-50"
+            >
+               ›
+            </button>
+
+            {/* Close Button (Bottom Center) */}
+            <button 
+               onClick={handleClose}
+               onPointerDown={(e) => e.stopPropagation()}
+               className="fixed bottom-12 left-1/2 -translate-x-1/2 px-6 py-2 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white text-xs font-bold pointer-events-auto hover:bg-white/20 transition-all shadow-lg z-50"
+            >
+               CLOSE
+            </button>
          </div>
       )}
 
       <div className="absolute bottom-10 left-0 w-full pointer-events-none flex flex-col items-center justify-end z-10">
+        {/* Hide instruction when photo is active */}
         {uiActiveId === -1 && (
           <div className="mt-4 flex flex-col items-center gap-2 text-yellow-100/60 text-sm tracking-widest font-light uppercase">
             <p className="animate-pulse opacity-80 bg-black/20 px-4 py-1 rounded-full backdrop-blur-sm">
-              {cameraActive ? (activeMonth ? '🖐 Open Palm to Exit Film Mode' : 'Show 1-12 Fingers for Month | ✊ Form 2025') : 'Tap Screen to View Photos'}
+              {cameraActive ? '✊ Fist: Form | 🖐 Palm: Scatter' : 'Tap Photos to View'}
             </p>
           </div>
         )}
       </div>
+      
+      {/* Camera View - Bottom Left */}
+      <video 
+         ref={videoRef} 
+         className={`fixed bottom-4 left-4 w-32 h-24 object-cover rounded-lg border border-white/20 shadow-lg z-20 transition-opacity duration-300 pointer-events-none ${cameraActive ? 'opacity-100' : 'opacity-0'}`} 
+         autoPlay 
+         playsInline 
+         muted 
+         style={{ transform: 'scaleX(-1)' }}
+      ></video>
+
+      <div className="absolute top-0 left-0 w-full h-full border-[1px] border-white/5 pointer-events-none m-4 box-border w-[calc(100%-2rem)] h-[calc(100%-2rem)] rounded-3xl z-10 mix-blend-overlay" />
     </div>
   );
 }

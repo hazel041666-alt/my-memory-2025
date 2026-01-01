@@ -6,35 +6,94 @@ import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision';
 // 1. 资源生成与工具函数
 // -----------------------------------------------------------------------------
 
-// 模拟拍立得纹理生成器 (高清版)
-const createPolaroidTexture = (content: string | HTMLImageElement, color: string) => {
+// 增强版：解析照片日期
+const getPhotoDate = (file: File): Promise<Date> => {
+  return new Promise((resolve) => {
+    const filenameMatch = file.name.match(/(20\d{2})[-_]?(\d{2})[-_]?(\d{2})/);
+    let filenameDate: Date | null = null;
+    if (filenameMatch) {
+        const y = parseInt(filenameMatch[1]);
+        const m = parseInt(filenameMatch[2]) - 1;
+        const d = parseInt(filenameMatch[3]);
+        const date = new Date(y, m, d);
+        if (!isNaN(date.getTime()) && y >= 2000 && y <= 2030 && m >= 0 && m <= 11) {
+            filenameDate = date;
+        }
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const buffer = e.target?.result as ArrayBuffer;
+        const uint8 = new Uint8Array(buffer);
+        let str = '';
+        const len = Math.min(uint8.length, 65536); 
+        for (let i = 0; i < len; i++) {
+            const code = uint8[i];
+            if (code > 32 && code < 127) {
+                str += String.fromCharCode(code);
+            } else {
+                str += ' '; 
+            }
+        }
+        
+        const exifMatch = str.match(/(20\d{2}):(\d{2}):(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+        
+        if (exifMatch) {
+            const y = parseInt(exifMatch[1]);
+            const m = parseInt(exifMatch[2]) - 1;
+            const d = parseInt(exifMatch[3]);
+            const h = parseInt(exifMatch[4]);
+            const min = parseInt(exifMatch[5]);
+            const s = parseInt(exifMatch[6]);
+            const exifDate = new Date(y, m, d, h, min, s);
+            
+            if (!isNaN(exifDate.getTime())) {
+                resolve(exifDate);
+                return;
+            }
+        }
+      } catch (err) {
+        console.warn("EXIF parse error", err);
+      }
+
+      if (filenameDate) {
+          resolve(filenameDate);
+          return;
+      }
+
+      resolve(new Date(file.lastModified));
+    };
+
+    reader.onerror = () => resolve(new Date(file.lastModified));
+    reader.readAsArrayBuffer(file.slice(0, 65536)); 
+  });
+};
+
+// 模拟拍立得纹理生成器 (性能优化版 + 原色调)
+const createPolaroidTexture = (content: string | HTMLImageElement, color: string, monthLabel?: string) => {
   const canvas = document.createElement('canvas');
-  // 提升分辨率至 1024x1200 以保证放大后的清晰度
-  canvas.width = 1024;
-  canvas.height = 1200; 
+  canvas.width = 512;
+  canvas.height = 600; 
   const ctx = canvas.getContext('2d');
   if (!ctx) return new THREE.Texture();
 
   ctx.fillStyle = '#fdfdfd';
-  ctx.fillRect(0, 0, 1024, 1200);
+  ctx.fillRect(0, 0, 512, 600);
   
   ctx.shadowColor = "rgba(0,0,0,0.15)";
-  ctx.shadowBlur = 60; 
+  ctx.shadowBlur = 30; 
   
   ctx.fillStyle = color;
-  ctx.fillRect(80, 80, 864, 864); 
+  ctx.fillRect(40, 40, 432, 432); 
   ctx.shadowBlur = 0;
 
   if (typeof content === 'string') {
-    ctx.font = 'bold 160px "Impact", sans-serif'; 
+    ctx.font = 'bold 80px "Impact", sans-serif'; 
     ctx.fillStyle = '#333';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(content, 512, 512); 
-    
-    ctx.font = '80px "Courier New", monospace';
-    ctx.fillStyle = '#666';
-    ctx.fillText("2025", 512, 1080);
+    ctx.fillText(content, 256, 256); 
   } else {
     const aspect = content.width / content.height;
     let sw = content.width;
@@ -50,16 +109,18 @@ const createPolaroidTexture = (content: string | HTMLImageElement, color: string
     }
     ctx.shadowColor = "transparent";
     ctx.shadowBlur = 0;
-    ctx.drawImage(content, sx, sy, sw, sh, 80, 80, 864, 864);
-    
-    ctx.font = '64px "Courier New", monospace';
-    ctx.fillStyle = '#444';
-    ctx.fillText("My Memory", 512, 1080);
+    ctx.drawImage(content, sx, sy, sw, sh, 40, 40, 432, 432);
   }
+
+  ctx.font = 'bold 40px "Courier New", monospace';
+  ctx.fillStyle = '#444';
+  ctx.textAlign = 'center';
+  ctx.fillText(monthLabel || "2025 Memory", 256, 540);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.minFilter = THREE.LinearMipMapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
+  texture.colorSpace = THREE.LinearSRGBColorSpace; 
   return texture;
 };
 
@@ -126,7 +187,7 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, width, height);
   
-  ctx.font = 'bold 320px "Verdana", "Arial", sans-serif';
+  ctx.font = '900 320px "Arial Black", "Impact", sans-serif';
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -144,8 +205,8 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
     for (let x = 0; x < width; x += step) {
       const index = (y * width + x) * 4;
       if (data[index] > 100) { 
-        const pX = (x / width - 0.5) * 75; 
-        const pY = -(y / height - 0.5) * 35; 
+        const pX = (x / width - 0.5) * 45; 
+        const pY = -(y / height - 0.5) * 22; 
         points.push(new THREE.Vector3(pX, pY, 0));
       }
     }
@@ -162,9 +223,9 @@ const generateTextLayout = (text: string, count: number): THREE.Vector3[] => {
   for (let i = 0; i < count; i++) {
     const p = points[i % points.length];
     result.push(new THREE.Vector3(
-      p.x + (Math.random() - 0.5) * 0.1, 
-      p.y + (Math.random() - 0.5) * 0.1, 
-      (Math.random() - 0.5) * 0.1        
+      p.x + (Math.random() - 0.5) * 0.05, 
+      p.y + (Math.random() - 0.5) * 0.05, 
+      (Math.random() - 0.5) * 0.05        
     ));
   }
   
@@ -191,11 +252,7 @@ const starVertexShader = `
   attribute float aSize;
   attribute float aRandom;
   varying float vAlpha;
-  
-  float easeInOutQuint(float x) {
-    return x < 0.5 ? 16.0 * x * x * x * x * x : 1.0 - pow(-2.0 * x + 2.0, 5.0) / 2.0;
-  }
-
+  float easeInOutQuint(float x) { return x < 0.5 ? 16.0 * x * x * x * x * x : 1.0 - pow(-2.0 * x + 2.0, 5.0) / 2.0; }
   void main() {
     float t = easeInOutQuint(uProgress);
     vec3 floating = vec3(
@@ -203,14 +260,11 @@ const starVertexShader = `
       cos(uTime * 0.3 + aRandom * 35.0) * 0.05,
       sin(uTime * 0.4 + aRandom * 15.0) * 0.02
     ) * mix(1.0, 0.0, t); 
-
     vec3 pos = mix(aPositionChaos, aPositionFormed, t);
     vec4 mvPosition = modelViewMatrix * vec4(pos + floating, 1.0);
-    
     float twinkleBase = sin(uTime * (3.0 + aRandom * 5.0) + aRandom * 100.0);
     twinkleBase = smoothstep(-0.5, 1.0, twinkleBase) * 0.5 + 0.5; 
     float finalTwinkle = mix(twinkleBase, 1.0, t);
-
     float stateScale = mix(1.0, 0.8, t); 
     gl_PointSize = aSize * stateScale * finalTwinkle * (450.0 / -mvPosition.z);
     gl_Position = projectionMatrix * mvPosition;
@@ -222,7 +276,6 @@ const starFragmentShader = `
   uniform vec3 uColorMain;
   uniform vec3 uColorSub;
   varying float vAlpha;
-
   void main() {
     vec2 uv = 2.0 * gl_PointCoord - 1.0;
     float dist = length(uv);
@@ -231,10 +284,8 @@ const starFragmentShader = `
     float strength = core * 3.0 + glow * 0.5;
     vec3 color = mix(uColorSub, uColorMain, vAlpha * 0.8 + 0.2);
     color = mix(color, vec3(1.0), core * 0.8); 
-    
     float alpha = strength * vAlpha;
     if (alpha < 0.01) discard; 
-    
     gl_FragColor = vec4(color, min(1.0, alpha * 1.5)); 
   }
 `;
@@ -247,16 +298,11 @@ const decoVertexShader = `
   attribute vec3 aRandomVec; 
   attribute float aRandom;   
   attribute vec3 color; 
-  
   varying vec3 vNormal;
   varying vec3 vViewPosition;
   varying float vRandomVal;
   varying vec3 vColor; 
-
-  float easeOutQuart(float x) {
-    return 1.0 - pow(1.0 - x, 4.0);
-  }
-
+  float easeOutQuart(float x) { return 1.0 - pow(1.0 - x, 4.0); }
   mat4 rotationMatrix(vec3 axis, float angle) {
       axis = normalize(axis);
       float s = sin(angle);
@@ -267,30 +313,23 @@ const decoVertexShader = `
                   oc * axis.z * axis.x - axis.y * s,  oc * axis.y * axis.z + axis.x * s,  oc * axis.z * axis.z + c,           0.0,
                   0.0,                                0.0,                                0.0,                                1.0);
   }
-
   void main() {
     float t = easeOutQuart(uProgress);
     vRandomVal = aRandom;
     vColor = color; 
-
     vec3 pos = mix(aPosChaos, aPosFormed, t);
-    
     vec3 floating = vec3(
       sin(uTime * 0.5 + aRandom * 20.0),
       cos(uTime * 0.3 + aRandom * 30.0),
       sin(uTime * 0.4 + aRandom * 40.0)
     ) * 0.2; 
-    
     float rotSpeed = mix(2.0, 0.5, t); 
     float angle = uTime * rotSpeed * 0.5 + aRandom * 10.0;
     mat4 rotMat = rotationMatrix(aRandomVec, angle);
-    
     vNormal = normalize((rotMat * vec4(normal, 0.0)).xyz);
     vec3 transformed = (rotMat * vec4(position, 1.0)).xyz;
-    
     float scale = mix(0.0, 1.0, smoothstep(0.0, 0.2, uProgress + aRandom * 0.2));
     scale = mix(1.0, scale, t);
-
     vec4 mvPosition = modelViewMatrix * vec4(pos + floating + transformed * scale, 1.0);
     vViewPosition = -mvPosition.xyz;
     gl_Position = projectionMatrix * mvPosition;
@@ -302,25 +341,17 @@ const decoFragmentShader = `
   varying vec3 vViewPosition;
   varying float vRandomVal;
   varying vec3 vColor; 
-
   void main() {
     vec3 normal = normalize(vNormal);
     vec3 viewDir = normalize(vViewPosition);
     vec3 lightDir = normalize(vec3(0.5, 1.0, 1.0)); 
-
     float diff = max(dot(normal, lightDir), 0.0);
-    
     vec3 halfDir = normalize(lightDir + viewDir);
     float spec = pow(max(dot(normal, halfDir), 0.0), 64.0);
     float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
     float reflection = pow(max(dot(reflect(-viewDir, normal), vec3(0.0, 1.0, 0.0)), 0.0), 2.0);
-
     vec3 color = vColor; 
-    vec3 lighting = color * (0.3 + diff * 0.5) 
-                  + vec3(1.0) * spec * 0.6 
-                  + color * fresnel * 0.4
-                  + vec3(1.0, 1.0, 0.9) * reflection * 0.2;
-
+    vec3 lighting = color * (0.3 + diff * 0.5) + vec3(1.0) * spec * 0.6 + color * fresnel * 0.4 + vec3(1.0, 1.0, 0.9) * reflection * 0.2;
     gl_FragColor = vec4(lighting, 1.0);
   }
 `;
@@ -359,36 +390,46 @@ export default function App() {
   // UI State for Carousel Navigation
   const [uiActiveId, setUiActiveId] = useState<number>(-1);
 
+  // Month Film Mode State
+  const [activeMonth, setActiveMonth] = useState<number | null>(null);
+  const activeMonthRef = useRef<number | null>(null);
+  const [previewMonth, setPreviewMonth] = useState<number | null>(null);
+  const previewMonthRef = useRef<number | null>(null); 
+
   // Camera & Gesture
   const videoRef = useRef<HTMLVideoElement>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const cameraActiveRef = useRef(false);
   
   const [modelLoaded, setModelLoaded] = useState(false);
-  const [gestureStatus, setGestureStatus] = useState<string>('None');
+  const [loadError, setLoadError] = useState(false);
+  
   const gestureRecognizerRef = useRef<GestureRecognizer | null>(null);
   const lastVideoTimeRef = useRef(-1);
   
-  // Photos State
-  const [userTextures, setUserTextures] = useState<THREE.Texture[]>([]);
+  // Photos State: 存储 Texture 和 Month
+  const [userTextures, setUserTextures] = useState<{tex: THREE.Texture, month: number}[]>([]);
   const [sceneReady, setSceneReady] = useState(false);
 
   // Interaction State
   const interactionState = useRef({
-    isPinching: false,
     handPos: new THREE.Vector2(0, 0),
     activePhotoId: -1,
-    grabbedPhotoId: -1,
-    lastPinchStatus: false,
-    pinchStartTime: 0,
-    lastTapTime: 0,
-    hoveredPhotoId: -1
+    isPinching: false
   });
+
+  // Cooldown / Debounce State for Gestures
+  const lastStateChangeTime = useRef(0);
 
   // Tap Detection Ref
   const touchStartRef = useRef({ x: 0, y: 0, time: 0 });
 
-  // Helper to update active photo safely and sync UI
+  // Sync Refs
+  useEffect(() => { isFormedRef.current = isFormed; }, [isFormed]);
+  useEffect(() => { cameraActiveRef.current = cameraActive; }, [cameraActive]);
+  useEffect(() => { activeMonthRef.current = activeMonth; }, [activeMonth]);
+  useEffect(() => { previewMonthRef.current = previewMonth; }, [previewMonth]);
+
   const setActivePhoto = (id: number) => {
     interactionState.current.activePhotoId = id;
     setUiActiveId(id);
@@ -416,31 +457,63 @@ export default function App() {
     setActivePhoto(-1);
   };
 
-  useEffect(() => { 
-    isFormedRef.current = isFormed; 
-  }, [isFormed]);
-
+  // 胶卷模式改变时，重置状态
   useEffect(() => {
-    cameraActiveRef.current = cameraActive;
-  }, [cameraActive]);
+    if (activeMonth !== null) {
+      setFormed(false); // 强制散开
+      setActivePhoto(-1);
+    }
+  }, [activeMonth]);
 
+  // Slideshow Logic (2秒自动轮播)
+  useEffect(() => {
+    // 修复 TS 类型: 使用 any 或 Window 接口
+    let interval: any;
+
+    if (activeMonth !== null) {
+      const validIds: number[] = [];
+      for (let i = 0; i < PHOTO_COUNT; i++) {
+         let m = 0;
+         if (i < userTextures.length) m = userTextures[i].month;
+         else m = (i % 12) + 1;
+         if (m === activeMonth) validIds.push(i);
+      }
+
+      if (validIds.length > 0) {
+          let currentIndex = validIds.indexOf(interactionState.current.activePhotoId);
+          if (currentIndex === -1) {
+              currentIndex = 0;
+              setActivePhoto(validIds[0]);
+          }
+          interval = setInterval(() => {
+              currentIndex = (currentIndex + 1) % validIds.length;
+              setActivePhoto(validIds[currentIndex]);
+          }, 2000);
+      }
+    } else {
+        if (interactionState.current.activePhotoId !== -1) setActivePhoto(-1);
+    }
+    return () => clearInterval(interval);
+  }, [activeMonth, userTextures]); 
+
+  // Load Model
   useEffect(() => {
     let isMounted = true;
     const loadModel = async () => {
       try {
         console.log("Loading MediaPipe Vision...");
         const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
         );
         if (!isMounted) return;
         
         const recognizer = await GestureRecognizer.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task",
-            delegate: "GPU"
+            delegate: "CPU"
           },
           runningMode: "VIDEO",
-          numHands: 1
+          numHands: 1 
         });
         
         if (isMounted) {
@@ -450,7 +523,7 @@ export default function App() {
         }
       } catch(e) { 
         console.error("MediaPipe Load Error:", e);
-        if (isMounted) setModelLoaded(false);
+        if (isMounted) setLoadError(true);
       }
     };
     loadModel();
@@ -459,13 +532,16 @@ export default function App() {
 
   const enableCam = async () => {
     if (!gestureRecognizerRef.current) { 
-        if (!modelLoaded) alert("AI Model is still loading... Please wait.");
+        if (loadError) alert("AI Component Failed. Refresh to retry.");
+        else if (!modelLoaded) alert("AI Model Loading... Please wait");
         return; 
     }
     
     if (cameraActive) {
       setCameraActive(false);
       setFormed(false);
+      setActiveMonth(null);
+      setPreviewMonth(null);
       if (videoRef.current?.srcObject) {
         (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
         videoRef.current.srcObject = null;
@@ -476,7 +552,7 @@ export default function App() {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.addEventListener('loadeddata', () => {
-             if (videoRef.current) videoRef.current.play(); 
+             if (videoRef.current) videoRef.current.play().catch(()=>{}); 
              setCameraActive(true);
           });
         }
@@ -487,32 +563,32 @@ export default function App() {
     }
   };
 
-  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const files = Array.from(e.target.files);
-      const newTextures: THREE.Texture[] = [];
-      let loadedCount = 0;
+      const processedFiles = await Promise.all(files.map(async (file) => {
+          const date = await getPhotoDate(file);
+          const month = date.getMonth() + 1;
+          const monthStr = `${date.getFullYear()}.${month}`;
 
-      files.forEach(file => {
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          const img = new Image();
-          img.onload = () => {
-            const colors = ['#ff9a9e', '#a18cd1', '#fad0c4', '#fbc2eb', '#a6c1ee'];
-            const randomColor = colors[Math.floor(Math.random() * colors.length)];
-            const tex = createPolaroidTexture(img, randomColor);
-            newTextures.push(tex);
-            loadedCount++;
-            
-            if (loadedCount === files.length) {
-              setUserTextures(prev => [...prev, ...newTextures]); 
-              setSceneReady(prev => !prev); 
-            }
-          };
-          img.src = ev.target?.result as string;
-        };
-        reader.readAsDataURL(file);
-      });
+          return new Promise<{tex: THREE.Texture, month: number}>((resolve) => {
+              const reader = new FileReader();
+              reader.onload = (ev) => {
+                  const img = new Image();
+                  img.onload = () => {
+                    const tex = createPolaroidTexture(img, '#ffffff', monthStr);
+                    resolve({ tex, month });
+                  };
+                  img.src = ev.target?.result as string;
+              };
+              reader.readAsDataURL(file);
+          });
+      }));
+
+      if (processedFiles.length > 0) {
+          setUserTextures(prev => [...prev, ...processedFiles]);
+          setSceneReady(prev => !prev);
+      }
     }
   };
 
@@ -528,7 +604,6 @@ export default function App() {
     const height = mountRef.current.clientHeight;
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 500);
     
-    // 自适应摄像机距离
     const updateCameraDistance = () => {
         const aspect = window.innerWidth / window.innerHeight;
         const targetWidth = 75; 
@@ -543,17 +618,15 @@ export default function App() {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.outputColorSpace = THREE.SRGBColorSpace; 
+    renderer.outputColorSpace = THREE.LinearSRGBColorSpace; 
     renderer.toneMapping = THREE.NoToneMapping; 
     mountRef.current.appendChild(renderer.domElement);
 
     const raycaster = new THREE.Raycaster();
     raycaster.params.Points = { threshold: 1.0 };
 
-    // 2. Generate "2025" Positions
     const textTargetPositions = generateTextLayout("2025", TOTAL_ITEMS);
 
-    // 3. Stars (Background)
     const starGeo = new THREE.BufferGeometry();
     const sPosChaos = new Float32Array(STAR_COUNT * 3);
     const sPosFormed = new Float32Array(STAR_COUNT * 3);
@@ -594,7 +667,6 @@ export default function App() {
     stars.frustumCulled = false; 
     scene.add(stars);
 
-    // 4. Photos & Decorations
     const defaultPhotoTextures = [
       createPolaroidTexture('2025', '#ff9a9e'),
       createPolaroidTexture('HOPE', '#a18cd1'),
@@ -608,7 +680,6 @@ export default function App() {
     const objects: any[] = [];
     const meshes: THREE.Mesh[] = [];
 
-    // --- 辅助函数：设置几何体颜色 ---
     const setGeometryColor = (geometry: THREE.BufferGeometry, color: THREE.Color) => {
         const count = geometry.attributes.position.count;
         const colors = new Float32Array(count * 3);
@@ -620,7 +691,6 @@ export default function App() {
         geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     };
 
-    // --- 立体装饰几何体生成 ---
     const createStarGeo = () => {
       const shape = new THREE.Shape();
       const points = 5;
@@ -681,16 +751,17 @@ export default function App() {
         let isDeco = false;
         let mat;
         let geo;
+        let photoMonth = 0; 
         
         if (i < PHOTO_COUNT) {
-          // --- 照片 ---
           let tex;
           if (i < userTextures.length) {
-             tex = userTextures[i]; 
+             tex = userTextures[i].tex;
+             photoMonth = userTextures[i].month;
           } else {
              tex = defaultPhotoTextures[i % defaultPhotoTextures.length];
+             photoMonth = (i % 12) + 1; 
           }
-
           const scaleBase = 0.6 + Math.random() * 0.3;
           geo = new THREE.PlaneGeometry(1.0 * scaleBase, 1.2 * scaleBase);
           mat = new THREE.ShaderMaterial({
@@ -699,7 +770,6 @@ export default function App() {
               transparent: true, side: THREE.DoubleSide
           });
         } else {
-          // --- 装饰 ---
           isDeco = true;
           const decoType = i % 3; 
           if (decoType === 0) { 
@@ -764,36 +834,26 @@ export default function App() {
             id: i, mesh: mesh, chaosPos: chaosPos, formedPos: formedPos, currentPos: chaosPos.clone(),
             randomRot: new THREE.Euler((Math.random()-0.5)*1.0, (Math.random()-0.5)*1.0, (Math.random()-0.5)*0.5), 
             floatOffset: Math.random() * 100,
-            isDeco: isDeco 
+            isDeco: isDeco,
+            month: photoMonth
         });
     }
 
-    // Input Handling: Pointer Events for Unified Touch/Mouse
     const onPointerDown = (e: PointerEvent | TouchEvent) => {
-        if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) {
-            return;
-        }
-        
+        if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) return;
         const clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
         touchStartRef.current = { x: clientX, y: clientY, time: Date.now() };
     };
 
     const onPointerUp = (e: PointerEvent | TouchEvent) => {
-        if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) {
-            return;
-        }
-        
+        if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) return;
         const clientX = 'changedTouches' in e ? e.changedTouches[0].clientX : (e as PointerEvent).clientX;
         const clientY = 'changedTouches' in e ? e.changedTouches[0].clientY : (e as PointerEvent).clientY;
-        
         const dx = clientX - touchStartRef.current.x;
         const dy = clientY - touchStartRef.current.y;
         const dt = Date.now() - touchStartRef.current.time;
-
-        if (dt < 300 && Math.hypot(dx, dy) < 30) {
-            handleRaycast(clientX, clientY);
-        }
+        if (dt < 300 && Math.hypot(dx, dy) < 30) handleRaycast(clientX, clientY);
     };
 
     const onMouseClick = (e: MouseEvent) => {
@@ -802,45 +862,29 @@ export default function App() {
     };
 
     const handleRaycast = (clientX: number, clientY: number) => {
+        if (activeMonthRef.current !== null) return;
         const mouse = new THREE.Vector2((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
         raycaster.setFromCamera(mouse, camera);
         const intersects = raycaster.intersectObjects(meshes);
-        
         let targetId = -1;
-
-        // 1. Direct hit
         if (intersects.length > 0) {
             const obj = objects.find(p => p.mesh === intersects[0].object);
-            if (obj && !obj.isDeco) {
-                targetId = obj.id;
-            }
+            if (obj && !obj.isDeco) targetId = obj.id;
         }
-        
-        // 2. Mobile Smart Magnetism (If no direct hit)
         if (targetId === -1 && window.innerWidth < 768) {
              let closestDist = 0.15; 
              objects.forEach(obj => {
                 if (!obj.isDeco) {
                     const screenPos = obj.mesh.position.clone().project(camera);
                     const dist = new THREE.Vector2(screenPos.x, screenPos.y).distanceTo(mouse);
-                    if (dist < closestDist) {
-                        closestDist = dist;
-                        targetId = obj.id;
-                    }
+                    if (dist < closestDist) { closestDist = dist; targetId = obj.id; }
                 }
              });
-             
-             if (targetId === -1 && interactionState.current.activePhotoId === -1) {
-                 targetId = Math.floor(Math.random() * PHOTO_COUNT);
-             }
+             if (targetId === -1 && interactionState.current.activePhotoId === -1) targetId = Math.floor(Math.random() * PHOTO_COUNT);
         }
-
-        if (targetId !== -1) {
-             setActivePhoto(targetId);
-        }
+        if (targetId !== -1) setActivePhoto(targetId);
     };
 
-    // Use Pointer events for universal support
     window.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('touchstart', onPointerDown, { passive: false });
@@ -849,13 +893,15 @@ export default function App() {
 
     const clock = new THREE.Clock();
     let reqId: number;
+    let currentFilmIndex = 0;
 
     const animate = () => {
+      if (!mountRef.current) return;
       reqId = requestAnimationFrame(animate);
       const delta = clock.getDelta();
       const time = clock.elapsedTime;
 
-      // Gesture Logic
+      // Gesture
       const camActive = cameraActiveRef.current;
       if (camActive && gestureRecognizerRef.current && videoRef.current && videoRef.current.readyState === 4) {
           const nowInMs = Date.now();
@@ -865,11 +911,45 @@ export default function App() {
               
               if (results.gestures.length > 0) {
                   const name = results.gestures[0][0].categoryName;
-                  setGestureStatus(name);
-                  if (name === 'Closed_Fist' && !isFormedRef.current) setFormed(true);
-                  if (name === 'Open_Palm' && isFormedRef.current) setFormed(false);
+                  
+                  if (!isFormedRef.current) {
+                     if (results.landmarks.length > 0) {
+                        const hand = results.landmarks[0];
+                        const indexTip = hand[8];
+                        const thumbTip = hand[4];
+                        const distance = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
+                        
+                        const isPinching = distance < 0.05;
 
-                  if (results.landmarks.length > 0) {
+                        if (isPinching) {
+                            const rawX = 1 - indexTip.x; 
+                            const safeX = Math.max(0.1, Math.min(0.9, rawX));
+                            const month = Math.floor(((safeX - 0.1) / 0.8) * 11.99) + 1;
+                            setPreviewMonth(month);
+                            interactionState.current.isPinching = true;
+                        } else {
+                            if (interactionState.current.isPinching) {
+                                const currentPreview = previewMonthRef.current;
+                                if (currentPreview !== null) {
+                                    setActiveMonth(currentPreview);
+                                    setPreviewMonth(null);
+                                }
+                                interactionState.current.isPinching = false;
+                            }
+                        }
+                     }
+                  }
+
+                  if (name === 'Closed_Fist') {
+                    if (!isFormedRef.current || activeMonthRef.current !== null) { 
+                        setFormed(true); setActiveMonth(null); setPreviewMonth(null); 
+                    }
+                  } 
+                  else if (name === 'Open_Palm') {
+                    if (isFormedRef.current) { setFormed(false); }
+                  }
+
+                  if (results.landmarks.length > 0 && !interactionState.current.isPinching) {
                       const hand = results.landmarks[0];
                       const indexTip = hand[8];
                       const handX = (1 - indexTip.x) * 2 - 1;
@@ -877,7 +957,7 @@ export default function App() {
                       interactionState.current.handPos.set(handX, handY);
                   }
               } else {
-                  setGestureStatus('None');
+                  interactionState.current.isPinching = false;
               }
           }
       }
@@ -889,14 +969,26 @@ export default function App() {
           starMat.uniforms.uProgress.value = THREE.MathUtils.lerp(starMat.uniforms.uProgress.value, targetP, 1 - Math.exp(-3.0 * delta));
       }
 
-      // Update Camera
-      const targetX = (camActive ? interactionState.current.handPos.x : mouseRef.current.x) * 3.0;
-      const targetY = (camActive ? interactionState.current.handPos.y : mouseRef.current.y) * 3.0;
-      camera.position.x += (targetX - camera.position.x) * 0.05;
-      camera.position.y += (targetY - camera.position.y) * 0.05;
+      const uProgress = starMat.uniforms.uProgress.value;
+      const isFilmMode = activeMonthRef.current !== null;
+
+      // 修复：targetCamZ 定义
+      let targetCamX = (camActive ? 0 : mouseRef.current.x * 3.0);
+      let targetCamY = (camActive ? 0 : mouseRef.current.y * 3.0);
+      let targetCamZ = isFilmMode ? 15 : (window.innerWidth<768 ? 50 : 35); 
+      
+      camera.position.x += (targetCamX - camera.position.x) * 0.05;
+      camera.position.y += (targetCamY - camera.position.y) * 0.05;
+      camera.position.z += (targetCamZ - camera.position.z) * 0.05;
       camera.lookAt(0, 0, 0);
 
-      const uProgress = starMat.uniforms.uProgress.value;
+      // Layout
+      let filmX = 0;
+      if (isFilmMode) {
+          const monthPhotos = objects.filter(o => o.month === activeMonthRef.current && !o.isDeco);
+          filmX = -((monthPhotos.length - 1) * 1.5) / 2;
+      }
+      let currentFilmIndex = 0;
 
       objects.forEach(p => {
           const isActive = interactionState.current.activePhotoId === p.id;
@@ -904,43 +996,56 @@ export default function App() {
           if (p.isDeco) {
              (p.mesh.material as THREE.ShaderMaterial).uniforms.uTime.value = time;
              (p.mesh.material as THREE.ShaderMaterial).uniforms.uProgress.value = uProgress;
+             p.mesh.visible = !isFilmMode; 
           } else {
-             p.currentPos.lerpVectors(p.chaosPos, p.formedPos, uProgress); 
+             let targetPos = new THREE.Vector3();
+             let targetRot = new THREE.Euler();
+             let targetScale = 1.0;
 
-              let targetPos = new THREE.Vector3();
-              let targetRot = new THREE.Euler();
-              let targetScale = 1.0;
+             if (isActive) {
+                 const camDir = new THREE.Vector3(); camera.getWorldDirection(camDir);
+                 targetPos.copy(camera.position).add(camDir.multiplyScalar(6)); 
+                 targetRot.set(camera.rotation.x, camera.rotation.y, camera.rotation.z);
+                 targetScale = 3.0; 
+                 p.mesh.visible = true;
+             } else if (isFilmMode) {
+                 if (p.month === activeMonthRef.current) {
+                     const spacing = 1.5;
+                     const xOffset = currentFilmIndex * spacing + filmX;
+                     const scroll = Math.sin(time * 0.5) * Math.max(0, 5); 
+                     targetPos.set(xOffset + scroll, 0, 2); 
+                     targetRot.set(0, 0, 0); 
+                     targetScale = 1.2;
+                     p.mesh.visible = true;
+                     currentFilmIndex++;
+                 } else {
+                     targetPos.copy(p.currentPos).add(new THREE.Vector3(0, -50, 0)); 
+                     p.mesh.visible = false;
+                 }
+             } else {
+                 p.mesh.visible = true;
+                 p.currentPos.lerpVectors(p.chaosPos, p.formedPos, uProgress); 
+                 const floatX = Math.sin(time * 0.5 + p.floatOffset) * 0.2; 
+                 const floatY = Math.cos(time * 0.3 + p.floatOffset) * 0.2;
+                 targetPos.copy(p.currentPos).add(new THREE.Vector3(floatX, floatY, 0));
+                 if (isFormedRef.current) {
+                     const speed = 0.05;
+                     targetRot.set(Math.sin(time*speed+p.id)*0.1, Math.cos(time*speed*0.5+p.id)*0.1, 0);
+                 } else {
+                     targetRot.copy(p.randomRot);
+                     targetRot.x += Math.sin(time * 0.1) * 0.2;
+                 }
+             }
 
-              if (isActive) {
-                  const camDir = new THREE.Vector3();
-                  camera.getWorldDirection(camDir);
-                  targetPos.copy(camera.position).add(camDir.multiplyScalar(6)); 
-                  targetRot.set(camera.rotation.x, camera.rotation.y, camera.rotation.z);
-                  targetScale = 3.0; 
-              } else {
-                  const floatX = Math.sin(time * 0.5 + p.floatOffset) * 0.2; 
-                  const floatY = Math.cos(time * 0.3 + p.floatOffset) * 0.2;
-                  targetPos.copy(p.currentPos).add(new THREE.Vector3(floatX, floatY, 0));
-                  
-                  if (isFormedRef.current) {
-                      const speed = 0.05;
-                      targetRot.set(Math.sin(time*speed+p.id)*0.1, Math.cos(time*speed*0.5+p.id)*0.1, 0);
-                  } else {
-                      targetRot.copy(p.randomRot);
-                      targetRot.x += Math.sin(time * 0.1) * 0.2;
-                  }
-              }
-
-              const speed = isActive ? 0.15 : 0.05; 
-              p.mesh.position.lerp(targetPos, speed);
-              p.mesh.rotation.x += (targetRot.x - p.mesh.rotation.x) * speed;
-              p.mesh.rotation.y += (targetRot.y - p.mesh.rotation.y) * speed;
-              p.mesh.rotation.z += (targetRot.z - p.mesh.rotation.z) * speed;
-              p.mesh.scale.setScalar(THREE.MathUtils.lerp(p.mesh.scale.x, targetScale, speed));
-              p.mesh.renderOrder = isActive ? 999 : (p.isDeco ? 1 : 0); 
+             const speed = (isActive || isFilmMode) ? 0.1 : 0.05; 
+             p.mesh.position.lerp(targetPos, speed);
+             p.mesh.rotation.x += (targetRot.x - p.mesh.rotation.x) * speed;
+             p.mesh.rotation.y += (targetRot.y - p.mesh.rotation.y) * speed;
+             p.mesh.rotation.z += (targetRot.z - p.mesh.rotation.z) * speed;
+             p.mesh.scale.setScalar(THREE.MathUtils.lerp(p.mesh.scale.x, targetScale, speed));
+             p.mesh.renderOrder = isActive ? 999 : (isFilmMode ? 100 : 0); 
           }
       });
-
       renderer.render(scene, camera);
     };
     animate();
@@ -973,7 +1078,6 @@ export default function App() {
       window.removeEventListener('touchstart', onPointerDown);
       window.removeEventListener('touchend', onPointerUp);
       window.removeEventListener('click', onMouseClick);
-      
       cancelAnimationFrame(reqId);
       if(mountRef.current) mountRef.current.innerHTML = '';
       starGeo.dispose();
@@ -986,93 +1090,51 @@ export default function App() {
   return (
     <div className="relative w-full h-screen bg-slate-900 overflow-hidden select-none font-sans">
       <div ref={mountRef} className="w-full h-full block" style={{ background: '#020408' }} />
-      <video ref={videoRef} className="absolute top-0 left-0 w-64 h-48 opacity-0 pointer-events-none" autoPlay playsInline muted></video>
-      
-      {/* Hidden File Input */}
-      <input 
-        type="file" 
-        multiple 
-        accept="image/*" 
-        ref={fileInputRef}
-        className="hidden" 
-        onChange={handleUpload}
-      />
+      <video ref={videoRef} className="fixed bottom-4 left-4 w-32 h-24 object-cover rounded-lg border border-white/20 shadow-lg z-20 transition-opacity duration-300 pointer-events-none" style={{ opacity: cameraActive ? 1 : 0, transform: 'scaleX(-1)' }} autoPlay playsInline muted></video>
+      <input type="file" multiple accept="image/*" ref={fileInputRef} className="hidden" onChange={handleUpload} />
 
-      {/* Controls Container - Top Left */}
       <div className="fixed top-6 left-6 z-50 flex flex-col gap-3 items-start">
          <div className="flex gap-3">
-            <button 
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); enableCam(); }} 
-              className={`px-5 py-2 rounded-full border border-white/20 text-xs font-bold tracking-widest uppercase transition-all backdrop-blur-md shadow-lg ${cameraActive ? 'bg-red-500/20 text-red-200 border-red-500/50' : 'bg-black/30 text-white hover:bg-white/10'} ${!modelLoaded ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              {!modelLoaded ? 'Loading AI...' : (cameraActive ? 'Stop Camera' : 'Start Camera')}
+            <button onClick={enableCam} className={`px-5 py-2 rounded-full border border-white/20 text-xs font-bold tracking-widest uppercase transition-all backdrop-blur-md shadow-lg ${cameraActive ? 'bg-red-500/20 text-red-200 border-red-500/50' : 'bg-black/30 text-white hover:bg-white/10'} ${!modelLoaded ? 'opacity-50 cursor-not-allowed' : (loadError ? 'bg-red-500/50' : '')}`}>
+              {loadError ? 'AI Failed - Refresh' : (!modelLoaded ? 'Initializing AI...' : (cameraActive ? 'Stop Camera' : 'Start Camera'))}
             </button>
-
-            <button 
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }} 
-              className="px-5 py-2 rounded-full border border-white/20 text-xs font-bold tracking-widest uppercase transition-all bg-black/30 text-white hover:bg-white/10 backdrop-blur-md shadow-lg"
-            >
-              Upload
-            </button>
+            <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }} className="px-5 py-2 rounded-full border border-white/20 text-xs font-bold tracking-widest uppercase transition-all bg-black/30 text-white hover:bg-white/10 backdrop-blur-md shadow-lg">Upload</button>
          </div>
       </div>
 
-      {/* Carousel UI */}
+      {previewMonth !== null && (
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 flex flex-col items-center gap-4 animate-fade-in pointer-events-none">
+              <div className="text-6xl font-bold text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.8)] font-mono">{previewMonth}月</div>
+              <div className="w-64 h-2 bg-white/20 rounded-full overflow-hidden">
+                  <div className="h-full bg-yellow-400 transition-all duration-100 ease-out" style={{ width: `${(previewMonth / 12) * 100}%` }} />
+              </div>
+              <div className="text-white/80 text-sm tracking-widest">PINCH & DRAG TO SELECT</div>
+          </div>
+      )}
+
+      {activeMonth !== null && (
+          <div className="fixed top-24 left-1/2 -translate-x-1/2 z-40 bg-black/50 backdrop-blur px-6 py-2 rounded-full border border-white/20 text-white font-bold tracking-widest animate-fade-in-down">
+              {activeMonth}月 MEMORIES
+          </div>
+      )}
+
       {uiActiveId !== -1 && (
          <div className="fixed inset-0 z-50 pointer-events-none">
-            {/* Prev Button (Left Center) */}
-            <button 
-               onClick={handlePrev}
-               onPointerDown={(e) => e.stopPropagation()}
-               className="fixed top-1/2 left-4 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95 z-50"
-            >
-               ‹
-            </button>
-            
-            {/* Next Button (Right Center) */}
-            <button 
-               onClick={handleNext}
-               onPointerDown={(e) => e.stopPropagation()}
-               className="fixed top-1/2 right-4 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95 z-50"
-            >
-               ›
-            </button>
-
-            {/* Close Button (Bottom Center) */}
-            <button 
-               onClick={handleClose}
-               onPointerDown={(e) => e.stopPropagation()}
-               className="fixed bottom-12 left-1/2 -translate-x-1/2 px-6 py-2 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white text-xs font-bold pointer-events-auto hover:bg-white/20 transition-all shadow-lg z-50"
-            >
-               CLOSE
-            </button>
+            <button onClick={handlePrev} onPointerDown={(e) => e.stopPropagation()} className="fixed top-1/2 left-4 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95 z-50">‹</button>
+            <button onClick={handleNext} onPointerDown={(e) => e.stopPropagation()} className="fixed top-1/2 right-4 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white flex items-center justify-center text-2xl pointer-events-auto hover:bg-white/20 transition-all active:scale-95 z-50">›</button>
+            <button onClick={handleClose} onPointerDown={(e) => e.stopPropagation()} className="fixed bottom-12 left-1/2 -translate-x-1/2 px-6 py-2 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white text-xs font-bold pointer-events-auto hover:bg-white/20 transition-all shadow-lg z-50">CLOSE</button>
          </div>
       )}
 
       <div className="absolute bottom-10 left-0 w-full pointer-events-none flex flex-col items-center justify-end z-10">
-        {/* Hide instruction when photo is active */}
         {uiActiveId === -1 && (
           <div className="mt-4 flex flex-col items-center gap-2 text-yellow-100/60 text-sm tracking-widest font-light uppercase">
             <p className="animate-pulse opacity-80 bg-black/20 px-4 py-1 rounded-full backdrop-blur-sm">
-              {cameraActive ? '✊ Fist: Form | 🖐 Palm: Scatter' : 'Tap Photos to View'}
+              {cameraActive ? (activeMonth ? '✊ Fist to Return' : '👌 Pinch & Drag to Select Month | ✊ Form 2025') : 'Tap Screen to View Photos'}
             </p>
           </div>
         )}
       </div>
-      
-      {/* Camera View - Bottom Left */}
-      <video 
-         ref={videoRef} 
-         className={`fixed bottom-4 left-4 w-32 h-24 object-cover rounded-lg border border-white/20 shadow-lg z-20 transition-opacity duration-300 pointer-events-none ${cameraActive ? 'opacity-100' : 'opacity-0'}`} 
-         autoPlay 
-         playsInline 
-         muted 
-         style={{ transform: 'scaleX(-1)' }}
-      ></video>
-
-      <div className="absolute top-0 left-0 w-full h-full border-[1px] border-white/5 pointer-events-none m-4 box-border w-[calc(100%-2rem)] h-[calc(100%-2rem)] rounded-3xl z-10 mix-blend-overlay" />
     </div>
   );
 }
